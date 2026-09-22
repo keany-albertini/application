@@ -915,14 +915,24 @@ export function getSourceCatalog(active: Record<string, boolean>): SourceStatus[
         : "Clé API gratuite disponible sur demande",
     },
     {
+      id: "tavily-search",
+      name: "Tavily Web Search",
+      kind: "web-search",
+      active: Boolean(active["tavily-search"]),
+      url: "https://www.tavily.com/",
+      note: process.env.TAVILY_API_KEY
+        ? "Recherche universelle gratuite connectée"
+        : "Clé Tavily gratuite à ajouter pour les marques et sujets universels",
+    },
+    {
       id: "brave-search",
-      name: "Recherche web universelle",
+      name: "Brave Search",
       kind: "web-search",
       active: Boolean(active["brave-search"]),
       url: "https://brave.com/search/api/",
       note: process.env.BRAVE_SEARCH_API_KEY
-        ? "Recherche web structurée connectée"
-        : "Clé Brave Search à ajouter pour les marques et sujets universels",
+        ? "Moteur web de secours connecté"
+        : "Secours optionnel",
     },
   ];
 }
