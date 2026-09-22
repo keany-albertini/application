@@ -6,22 +6,25 @@ import {
   ChevronRight,
   Clock3,
   Compass,
+  Database,
   Heart,
   MapPin,
   Plus,
   Search,
+  ShieldCheck,
   Sparkles,
   Star,
   Trophy,
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { AppEvent } from "@/lib/types";
+import type { AppEvent, SourceStatus } from "@/lib/types";
 
 type ApiResponse = {
   events: AppEvent[];
   mode: "live" | "demo";
   sources: Record<string, boolean>;
+  sourceCatalog?: SourceStatus[];
 };
 
 type View = "calendar" | "explore" | "favorites";
@@ -29,10 +32,10 @@ type View = "calendar" | "explore" | "favorites";
 const QUICK_SEARCHES = [
   "Olympique de Marseille",
   "PSG",
-  "Real Madrid",
-  "Barcelona",
-  "Manchester City",
+  "Formula 1",
   "Red Bull",
+  "Barcelona",
+  "Concert Paris",
 ];
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -76,6 +79,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [mode, setMode] = useState<"live" | "demo">("demo");
+  const [sourceCatalog, setSourceCatalog] = useState<SourceStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
@@ -103,6 +107,7 @@ export default function Home() {
       const payload: ApiResponse = await response.json();
       setEvents(payload.events ?? []);
       setMode(payload.mode ?? "demo");
+      setSourceCatalog(payload.sourceCatalog ?? []);
 
       if (payload.events?.[0]) {
         const next = new Date(payload.events[0].start);
@@ -111,6 +116,7 @@ export default function Home() {
     } catch {
       setEvents([]);
       setMode("demo");
+      setSourceCatalog([]);
     } finally {
       setLoading(false);
     }
@@ -180,6 +186,8 @@ export default function Home() {
   }, [events, favorites, selectedDay, view]);
 
   const nextEvent = visibleEvents[0];
+  const activeSources = sourceCatalog.filter((source) => source.active);
+  const officialCount = events.filter((event) => event.official).length;
 
   async function publish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -230,7 +238,7 @@ export default function Home() {
           <h1>Ne rate plus rien.</h1>
           <p>
             Matchs, événements de marques, concerts, festivals et rendez-vous
-            professionnels dans un calendrier unique.
+            professionnels réunis dans un seul calendrier.
           </p>
         </div>
 
@@ -239,7 +247,7 @@ export default function Home() {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="OM, PSG, Red Bull, artiste…"
+            placeholder="OM, Red Bull, F1, concert, ville…"
             aria-label="Rechercher"
           />
           {query && (
@@ -274,18 +282,47 @@ export default function Home() {
             <Trophy size={18} />
           </span>
           <div>
-            <strong>{events.filter((event) => event.category === "sport").length}</strong>
-            <span>événements sport</span>
+            <strong>{events.length}</strong>
+            <span>événements trouvés</span>
           </div>
         </div>
         <div className="overview-card">
           <span className="overview-icon">
-            <Heart size={18} />
+            <ShieldCheck size={18} />
           </span>
           <div>
-            <strong>{favorites.length}</strong>
-            <span>favoris</span>
+            <strong>{officialCount}</strong>
+            <span>sources officielles</span>
           </div>
+        </div>
+      </section>
+
+      <section className="sources-panel">
+        <div className="sources-head">
+          <div>
+            <p className="section-kicker">SOURCES</p>
+            <h2>Calendrier connecté</h2>
+          </div>
+          <span className="source-count">
+            <Database size={14} />
+            {activeSources.length} actives
+          </span>
+        </div>
+        <div className="sources-scroll">
+          {sourceCatalog.slice(0, 14).map((source) => (
+            <a
+              key={source.id}
+              className={`source-chip ${source.active ? "active" : ""}`}
+              href={source.url}
+              target="_blank"
+              rel="noreferrer"
+              title={source.note}
+            >
+              {source.kind === "official" && <ShieldCheck size={12} />}
+              <span>{source.name}</span>
+              <i />
+            </a>
+          ))}
         </div>
       </section>
 
@@ -300,7 +337,15 @@ export default function Home() {
               : undefined
           }
         >
-          <p className="section-kicker">PROCHAIN ÉVÉNEMENT</p>
+          <div className="spotlight-top">
+            <p className="section-kicker">PROCHAIN ÉVÉNEMENT</p>
+            {nextEvent.official && (
+              <span className="official-badge">
+                <ShieldCheck size={12} />
+                Officiel
+              </span>
+            )}
+          </div>
           <h2>{nextEvent.title}</h2>
           <div className="spotlight-info">
             <span>
@@ -313,6 +358,7 @@ export default function Home() {
                 {[nextEvent.venue, nextEvent.city].filter(Boolean).join(" · ")}
               </span>
             )}
+            <span className="spotlight-source">{nextEvent.source}</span>
           </div>
         </section>
       )}
@@ -418,7 +464,7 @@ export default function Home() {
         {loading ? (
           <div className="loading-card">
             <Sparkles size={22} />
-            Mise à jour du calendrier…
+            Mise à jour depuis les sources…
           </div>
         ) : visibleEvents.length === 0 ? (
           <div className="empty-card">
@@ -447,6 +493,12 @@ export default function Home() {
                       <span className="category-pill">
                         {CATEGORY_LABELS[event.category] ?? "Événement"}
                       </span>
+                      {event.official && (
+                        <span className="official-badge compact">
+                          <ShieldCheck size={10} />
+                          Officiel
+                        </span>
+                      )}
                       <span className="source">{event.source}</span>
                     </div>
 
@@ -468,8 +520,12 @@ export default function Home() {
 
                     {event.description && <p>{event.description}</p>}
 
-                    {event.url && (
-                      <a href={event.url} target="_blank" rel="noreferrer">
+                    {(event.url || event.sourceUrl) && (
+                      <a
+                        href={event.url || event.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
                         Voir la source
                       </a>
                     )}
