@@ -1,0 +1,9 @@
+{
+  "name": "Application — calendrier mondial",
+  "short_name": "Application",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08090d",
+  "theme_color": "#08090d",
+  "description": "Un calendrier global pour le sport, la musique, les marques, la culture et les événements professionnels."
+}
