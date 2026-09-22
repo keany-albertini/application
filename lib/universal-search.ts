@@ -691,6 +691,56 @@ async function fetchEventPage(url: string, searchText: string) {
   }
 }
 
+
+const QUERY_SYNONYMS: Array<string[]> = [
+  ["ping pong", "table tennis", "tennis de table", "fftt"],
+  ["football", "soccer", "foot"],
+  ["basket", "basketball", "nba"],
+  ["running", "run", "course", "running club"],
+  ["concert", "music", "musique", "live"],
+  ["gaming", "esport", "e sport", "jeu video", "video game"],
+];
+
+function eventMatchesSearch(event: AppEvent, rawQuery: string) {
+  const query = normalize(rawQuery);
+  if (!query) return true;
+
+  const haystack = normalize(
+    [
+      event.title,
+      event.entity,
+      event.city,
+      event.country,
+      event.venue,
+      event.category,
+      event.description,
+      event.source,
+      event.sourceUrl,
+      event.url,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  const queryWords = query
+    .split(" ")
+    .filter(
+      (word) =>
+        word.length > 1 &&
+        !["event", "events", "agenda", "calendar", "calendrier", "official", "officiel"].includes(word)
+    );
+
+  const coveredBySynonym = (word: string) => {
+    const group = QUERY_SYNONYMS.find((items) =>
+      items.some((item) => normalize(item).split(" ").includes(word))
+    );
+    if (!group) return haystack.includes(word);
+    return group.some((item) => haystack.includes(normalize(item)));
+  };
+
+  return queryWords.every(coveredBySynonym);
+}
+
 function dedupe(events: AppEvent[]) {
   const seen = new Set<string>();
   return events.filter((event) => {
@@ -848,7 +898,9 @@ export async function fetchUniversalWebEvents(
     intent.text
   );
 
-  return dedupe([...structuredEvents, ...extractedEvents]).filter((event) =>
-    eventMatchesDate(event, intent.targetDate, intent.timezone)
+  return dedupe([...structuredEvents, ...extractedEvents]).filter(
+    (event) =>
+      eventMatchesSearch(event, intent.text) &&
+      eventMatchesDate(event, intent.targetDate, intent.timezone)
   );
 }
