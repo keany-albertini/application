@@ -318,7 +318,7 @@ function sourceActivation(events: AppEvent[]) {
     openagenda: [...names].some((name) => name.includes("openagenda")),
     datatourisme: names.has("datatourisme"),
     "tavily-search":
-      universalWebProvider() === "Tavily" &&
+      universalWebProvider()?.startsWith("Tavily") === true &&
       events.some((event) => event.id.startsWith("web-")),
     "brave-search":
       universalWebProvider() === "Brave Search" &&
@@ -420,10 +420,13 @@ export async function GET(request: NextRequest) {
     },
     universalSearch: {
       enabled: true,
-      webDiscoveryConfigured: Boolean(
-        process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY
-      ),
+      webDiscoveryConfigured: true,
       webProvider: universalWebProvider(),
+      webDiscoveryMode: process.env.TAVILY_API_KEY
+        ? "tavily-key"
+        : process.env.BRAVE_SEARCH_API_KEY
+          ? "brave-key"
+          : "tavily-keyless",
       openAgendaConfigured: Boolean(process.env.OPENAGENDA_API_KEY),
       dataTourismeConfigured: Boolean(process.env.DATATOURISME_API_KEY),
     },
