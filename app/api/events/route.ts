@@ -6,28 +6,48 @@ export const dynamic = "force-dynamic";
 
 const SPORTS_API_KEY = process.env.THESPORTSDB_API_KEY || "123";
 
-const TEAM_ALIASES: Record<string, string> = {
-  "om": "Olympique de Marseille",
-  "marseille": "Olympique de Marseille",
-  "olympique marseille": "Olympique de Marseille",
-  "psg": "Paris SG",
-  "paris": "Paris SG",
-  "real": "Real Madrid",
-  "barca": "Barcelona",
-  "barcelone": "Barcelona",
-  "man city": "Manchester City",
-  "manchester city": "Manchester City",
-  "liverpool": "Liverpool",
-  "bayern": "Bayern Munich",
+type CuratedTeam = {
+  idTeam: string;
+  strTeam: string;
+  aliases: string[];
 };
 
-const DISCOVERY_TEAMS = [
-  "Olympique de Marseille",
-  "Paris SG",
-  "Real Madrid",
-  "Barcelona",
-  "Manchester City",
-  "Liverpool",
+const CURATED_TEAMS: CuratedTeam[] = [
+  {
+    idTeam: "133707",
+    strTeam: "Marseille",
+    aliases: ["om", "olympique de marseille", "olympique marseille", "marseille"],
+  },
+  {
+    idTeam: "133714",
+    strTeam: "Paris Saint-Germain",
+    aliases: ["psg", "paris sg", "paris saint germain", "paris saint-germain"],
+  },
+  {
+    idTeam: "133738",
+    strTeam: "Real Madrid",
+    aliases: ["real", "real madrid"],
+  },
+  {
+    idTeam: "133739",
+    strTeam: "Barcelona",
+    aliases: ["barca", "barça", "barcelona", "fc barcelona", "barcelone"],
+  },
+  {
+    idTeam: "133613",
+    strTeam: "Manchester City",
+    aliases: ["man city", "manchester city", "city"],
+  },
+  {
+    idTeam: "133602",
+    strTeam: "Liverpool",
+    aliases: ["liverpool", "lfc"],
+  },
+  {
+    idTeam: "133604",
+    strTeam: "Arsenal",
+    aliases: ["arsenal", "afc"],
+  },
 ];
 
 function normalizeSearch(value: string) {
@@ -38,13 +58,9 @@ function normalizeSearch(value: string) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-function resolveTeamQuery(query: string) {
-  const normalized = normalizeSearch(query);
-  return TEAM_ALIASES[normalized] || query.trim();
-}
-
 function containsQuery(event: AppEvent, query: string) {
   if (!query) return true;
+
   const needle = normalizeSearch(query);
   const haystack = normalizeSearch(
     [
@@ -59,6 +75,7 @@ function containsQuery(event: AppEvent, query: string) {
       .filter(Boolean)
       .join(" ")
   );
+
   return haystack.includes(needle);
 }
 
@@ -68,72 +85,101 @@ function normalizeDate(date?: string, time?: string) {
   return `${date}T${safeTime}`;
 }
 
-async function searchTeams(query: string) {
-  const response = await fetch(
-    `https://www.thesportsdb.com/api/v1/json/${SPORTS_API_KEY}/searchteams.php?t=${encodeURIComponent(resolveTeamQuery(query))}`,
-    { cache: "no-store" }
-  );
+function findCuratedTeams(query: string) {
+  const needle = normalizeSearch(query);
 
-  if (!response.ok) return [];
-  const payload = await response.json();
-  return (payload?.teams ?? []).slice(0, 3);
+  if (!needle) {
+    return CURATED_TEAMS.slice(0, 6);
+  }
+
+  return CURATED_TEAMS.filter((team) => {
+    const names = [team.strTeam, ...team.aliases].map(normalizeSearch);
+    return names.some(
+      (name) => name === needle || name.includes(needle) || needle.includes(name)
+    );
+  }).slice(0, 3);
 }
 
-async function nextEventsForTeam(team: any): Promise<AppEvent[]> {
-  const response = await fetch(
-    `https://www.thesportsdb.com/api/v1/json/${SPORTS_API_KEY}/eventsnext.php?id=${team.idTeam}`,
-    { cache: "no-store" }
-  );
-
-  if (!response.ok) return [];
-  const payload = await response.json();
-
-  return (payload?.events ?? []).map((item: any): AppEvent => ({
-    id: `sportsdb-${item.idEvent}`,
-    title: item.strEvent,
-    start: normalizeDate(item.dateEvent, item.strTime),
-    venue: item.strVenue || undefined,
-    city: item.strCity || undefined,
-    country: item.strCountry || team.strCountry || undefined,
-    category: "sport",
-    source: "TheSportsDB",
-    entity: team.strTeam,
-    description: [item.strLeague, item.strSeason].filter(Boolean).join(" · "),
-    image:
-      item.strThumb ||
-      item.strPoster ||
-      team.strBanner ||
-      team.strFanart1 ||
-      team.strBadge ||
-      undefined,
-  }));
-}
-
-async function fetchSportsDb(query: string): Promise<AppEvent[]> {
+async function nextEventsForTeam(team: CuratedTeam): Promise<AppEvent[]> {
   try {
-    if (query) {
-      const teams = await searchTeams(query);
-      const batches = await Promise.all(teams.map(nextEventsForTeam));
-      return batches.flat();
-    }
-
-    const teamBatches = await Promise.all(
-      DISCOVERY_TEAMS.map(async (teamName) => {
-        const teams = await searchTeams(teamName);
-        if (!teams[0]) return [];
-        return nextEventsForTeam(teams[0]);
-      })
+    const response = await fetch(
+      `https://www.thesportsdb.com/api/v1/json/${SPORTS_API_KEY}/eventsnext.php?id=${team.idTeam}`,
+      {
+        cache: "no-store",
+        signal: AbortSignal.timeout(6500),
+      }
     );
 
-    return teamBatches.flat();
+    if (!response.ok) return [];
+    const payload = await response.json();
+
+    return (payload?.events ?? []).map((item: any): AppEvent => ({
+      id: `sportsdb-${item.idEvent}`,
+      title: item.strEvent || `${item.strHomeTeam} - ${item.strAwayTeam}`,
+      start: normalizeDate(item.dateEvent, item.strTime),
+      venue: item.strVenue || undefined,
+      city: item.strCity || undefined,
+      country: item.strCountry || undefined,
+      category: "sport",
+      source: "TheSportsDB",
+      entity: team.strTeam,
+      description: [item.strLeague, item.strSeason].filter(Boolean).join(" · "),
+      image:
+        item.strThumb ||
+        item.strPoster ||
+        item.strHomeTeamBadge ||
+        item.strAwayTeamBadge ||
+        undefined,
+    }));
   } catch {
     return [];
   }
 }
 
+async function fallbackArsenalSearch(query: string): Promise<AppEvent[]> {
+  if (normalizeSearch(query) !== "arsenal") return [];
+
+  try {
+    const response = await fetch(
+      `https://www.thesportsdb.com/api/v1/json/${SPORTS_API_KEY}/searchteams.php?t=Arsenal`,
+      {
+        cache: "no-store",
+        signal: AbortSignal.timeout(6500),
+      }
+    );
+
+    if (!response.ok) return [];
+
+    const payload = await response.json();
+    const team = payload?.teams?.[0];
+
+    if (!team?.idTeam) return [];
+
+    return nextEventsForTeam({
+      idTeam: team.idTeam,
+      strTeam: team.strTeam || "Arsenal",
+      aliases: ["arsenal"],
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function fetchSportsDb(query: string): Promise<AppEvent[]> {
+  const teams = findCuratedTeams(query);
+
+  if (teams.length > 0) {
+    const batches = await Promise.all(teams.map(nextEventsForTeam));
+    return batches.flat();
+  }
+
+  return fallbackArsenalSearch(query);
+}
+
 async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
   if (!url || !key) return [];
 
   try {
@@ -149,6 +195,7 @@ async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
         Authorization: `Bearer ${key}`,
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(6500),
     });
 
     if (!response.ok) return [];
@@ -196,6 +243,7 @@ function dedupe(events: AppEvent[]) {
 
 function futureOnly(events: AppEvent[]) {
   const yesterday = Date.now() - 24 * 60 * 60 * 1000;
+
   return events.filter((event) => {
     const value = new Date(event.start).getTime();
     return Number.isNaN(value) || value >= yesterday;
@@ -225,5 +273,6 @@ export async function GET(request: NextRequest) {
       sports: sports.length > 0,
       professional: professional.length > 0,
     },
+    sportsProvider: "TheSportsDB",
   });
 }
