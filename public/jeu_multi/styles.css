@@ -383,3 +383,158 @@ input:focus { border-color: rgba(255,81,69,.48); box-shadow: 0 0 0 4px rgba(255,
   .look-stick { right: 28px; bottom: 84px; }
   .mobile-actions { right: 28px; bottom: 16px; }
 }
+
+
+/* Mobile HUD polish */
+@media (pointer: coarse) {
+  .hud-top {
+    width: calc(100% - 20px);
+    max-width: none;
+    margin-top: 8px;
+    grid-template-columns: 64px 1fr 64px;
+    gap: 6px;
+  }
+
+  .score-box {
+    padding: 6px 7px;
+    border-left-width: 2px;
+    border-radius: 5px;
+  }
+
+  .score-box span {
+    font-size: 6px;
+  }
+
+  .score-box strong {
+    font-size: 19px;
+  }
+
+  .match-center {
+    min-width: 0;
+    gap: 5px;
+    padding: 0 6px;
+  }
+
+  .match-center span {
+    overflow: hidden;
+    max-width: 44%;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hud-bottom {
+    left: 10px;
+    right: 10px;
+    bottom: auto;
+    top: 61px;
+    align-items: start;
+  }
+
+  .health-wrap {
+    width: 104px;
+    padding: 7px 8px;
+    border-radius: 7px;
+  }
+
+  .health-wrap > strong {
+    font-size: 20px;
+  }
+
+  .health-wrap > span {
+    font-size: 6px;
+  }
+
+  .ammo {
+    padding: 7px 9px;
+    border-radius: 7px;
+  }
+
+  .ammo strong {
+    font-size: 24px;
+  }
+
+  .ammo span {
+    font-size: 9px;
+  }
+
+  .touch-stick {
+    width: 116px;
+    height: 116px;
+  }
+
+  .move-stick {
+    left: 14px;
+    bottom: 12px;
+  }
+
+  .look-stick {
+    right: 14px;
+    bottom: 86px;
+  }
+
+  .stick-ring {
+    inset: 13px;
+    background: rgba(8,10,15,.18);
+    border-color: rgba(255,255,255,.12);
+  }
+
+  .stick-ring i {
+    width: 38px;
+    height: 38px;
+    background: rgba(255,255,255,.13);
+  }
+
+  .mobile-actions {
+    right: 18px;
+    bottom: 12px;
+    gap: 8px;
+  }
+
+  .touch-action.fire {
+    width: 68px;
+    height: 68px;
+    font-size: 11px;
+  }
+
+  .touch-action.jump {
+    width: 50px;
+    height: 50px;
+    font-size: 9px;
+  }
+
+  .touch-action.reload {
+    width: 42px;
+    height: 42px;
+    margin-bottom: 37px;
+  }
+
+  #crosshair {
+    transform: translate(-50%, -50%) scale(.86);
+  }
+}
+
+@media (pointer: coarse) and (orientation: landscape) {
+  .touch-stick {
+    width: 120px;
+    height: 120px;
+  }
+
+  .move-stick {
+    left: 14px;
+    bottom: 10px;
+  }
+
+  .look-stick {
+    right: 17px;
+    bottom: 78px;
+  }
+
+  .mobile-actions {
+    right: 16px;
+    bottom: 10px;
+  }
+
+  .rotate-tip {
+    display: none;
+  }
+}
