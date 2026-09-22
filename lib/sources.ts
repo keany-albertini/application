@@ -67,6 +67,34 @@ const OFFICIAL_SOURCES: OfficialSource[] = [
     category: "sport",
     keywords: ["ligue 1", "om", "olympique de marseille", "marseille", "monaco", "lyon", "lille", "lens"],
   },
+  {
+    id: "formulae",
+    name: "Formula E",
+    url: "https://www.fiaformulae.com/en/calendar",
+    category: "sport",
+    keywords: ["formula e", "formule e", "fia formula e", "e-prix", "eprix"],
+  },
+  {
+    id: "nba",
+    name: "NBA",
+    url: "https://www.nba.com/schedule?cal=all&pd=false",
+    category: "sport",
+    keywords: ["nba", "basketball", "lakers", "celtics", "warriors", "knicks", "bulls", "spurs", "mavericks"],
+  },
+  {
+    id: "nhl",
+    name: "NHL",
+    url: "https://www.nhl.com/schedule",
+    category: "sport",
+    keywords: ["nhl", "hockey", "canadiens", "maple leafs", "bruins", "rangers", "oilers"],
+  },
+  {
+    id: "ufc",
+    name: "UFC",
+    url: "https://www.ufc.com/events",
+    category: "sport",
+    keywords: ["ufc", "mma", "fight night"],
+  },
 ];
 
 const MONTHS: Record<string, number> = {
@@ -312,6 +340,152 @@ const F1_2026_REMAINING: Array<[string, string, string]> = [
   ["2026-12-06T12:00:00Z", "Formula 1 Abu Dhabi Grand Prix", "Abu Dhabi"],
 ];
 
+
+function extractFormulaEFallback(html: string): AppEvent[] {
+  const text = clean(html);
+  const pattern = /R(\d{2})\s*[·-]\s*(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/g;
+  const results: AppEvent[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) && results.length < 40) {
+    const [full, round, day, month, year] = match;
+    const before = text.slice(Math.max(0, match.index - 80), match.index);
+    const cityMatch = before.match(/([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÿ .'-]{2,35})\s*$/);
+    const city = cityMatch?.[1]?.trim() || "Formula E";
+    const start = parseDate(day, month, year);
+    if (!start) continue;
+
+    results.push({
+      id: `official-formulae-${year}-${round}`,
+      title: `Formula E — ${city} E-Prix`,
+      start,
+      city: city === "Formula E" ? undefined : city,
+      category: "sport",
+      source: "Formula E",
+      sourceUrl: "https://www.fiaformulae.com/en/calendar",
+      official: true,
+      url: "https://www.fiaformulae.com/en/calendar",
+      entity: "Formula E",
+      description: `Round ${Number(round)} · Calendrier officiel Formula E`,
+    });
+  }
+
+  return dedupe(results);
+}
+
+function parseEmbeddedJsonScripts(html: string) {
+  const scripts = html.match(/<script[^>]*>[\s\S]*?<\/script>/gi) ?? [];
+  const parsed: unknown[] = [];
+
+  for (const script of scripts) {
+    const body = script
+      .replace(/^<script[^>]*>/i, "")
+      .replace(/<\/script>$/i, "")
+      .trim();
+
+    if (!body || (!body.startsWith("{") && !body.startsWith("["))) continue;
+    try {
+      parsed.push(JSON.parse(body));
+    } catch {}
+  }
+
+  return parsed;
+}
+
+function walkObjects(value: unknown, out: Record<string, any>[] = []) {
+  if (!value) return out;
+  if (Array.isArray(value)) {
+    value.forEach((item) => walkObjects(item, out));
+    return out;
+  }
+  if (typeof value !== "object") return out;
+  const object = value as Record<string, any>;
+  out.push(object);
+  Object.values(object).forEach((item) => walkObjects(item, out));
+  return out;
+}
+
+function extractNbaFallback(html: string): AppEvent[] {
+  const results: AppEvent[] = [];
+
+  for (const root of parseEmbeddedJsonScripts(html)) {
+    for (const row of walkObjects(root)) {
+      const home = row.homeTeam;
+      const away = row.awayTeam;
+      const start =
+        row.gameDateTimeUTC ||
+        row.gameDateTimeEst ||
+        row.gameDateTime ||
+        row.gameDateUTC;
+
+      if (!start || !home || !away) continue;
+
+      const homeName =
+        home.teamName ||
+        [home.teamCity, home.teamName].filter(Boolean).join(" ") ||
+        home.teamTricode;
+      const awayName =
+        away.teamName ||
+        [away.teamCity, away.teamName].filter(Boolean).join(" ") ||
+        away.teamTricode;
+
+      if (!homeName || !awayName) continue;
+
+      results.push({
+        id: `official-nba-${row.gameId || results.length}-${String(start)}`,
+        title: `${awayName} @ ${homeName}`,
+        start: String(start),
+        venue: row.arenaName || row.arena?.arenaName,
+        city: row.arenaCity || row.arena?.arenaCity,
+        category: "sport",
+        source: "NBA",
+        sourceUrl: "https://www.nba.com/schedule?cal=all&pd=false",
+        official: true,
+        url: "https://www.nba.com/schedule?cal=all&pd=false",
+        entity: "NBA",
+        description: row.gameLabel || row.gameSubtype || "NBA",
+      });
+    }
+  }
+
+  return dedupe(results);
+}
+
+function extractNhlFallback(html: string): AppEvent[] {
+  const results: AppEvent[] = [];
+
+  for (const root of parseEmbeddedJsonScripts(html)) {
+    for (const row of walkObjects(root)) {
+      const home = row.homeTeam;
+      const away = row.awayTeam;
+      const start = row.startTimeUTC || row.startTimeUtc;
+      if (!start || !home || !away) continue;
+
+      const homeName = home.name?.default || home.commonName?.default || home.abbrev;
+      const awayName = away.name?.default || away.commonName?.default || away.abbrev;
+      if (!homeName || !awayName) continue;
+
+      results.push({
+        id: `official-nhl-${row.id || results.length}-${String(start)}`,
+        title: `${awayName} @ ${homeName}`,
+        start: String(start),
+        venue: row.venue?.default,
+        category: "sport",
+        source: "NHL",
+        sourceUrl: "https://www.nhl.com/schedule",
+        official: true,
+        url: row.gameCenterLink
+          ? `https://www.nhl.com${row.gameCenterLink}`
+          : "https://www.nhl.com/schedule",
+        entity: "NHL",
+        description: row.gameType ? `NHL · type ${row.gameType}` : "NHL",
+      });
+    }
+  }
+
+  return dedupe(results);
+}
+
 function f1Fallback(): AppEvent[] {
   if (new Date().getFullYear() !== 2026) return [];
 
@@ -357,6 +531,18 @@ async function fetchOneOfficialSource(source: OfficialSource) {
 
     if (!events.length && source.id === "formula1") {
       events = f1Fallback();
+    }
+
+    if (!events.length && source.id === "formulae") {
+      events = extractFormulaEFallback(html);
+    }
+
+    if (!events.length && source.id === "nba") {
+      events = extractNbaFallback(html);
+    }
+
+    if (!events.length && source.id === "nhl") {
+      events = extractNhlFallback(html);
     }
 
     return events;
@@ -500,55 +686,99 @@ export async function fetchOpenAgenda(query: string): Promise<AppEvent[]> {
   }
 }
 
-export async function fetchSongkick(query: string): Promise<AppEvent[]> {
-  const apiKey = process.env.SONGKICK_API_KEY;
-  if (!apiKey || !query) return [];
+export async function fetchDataTourisme(query: string): Promise<AppEvent[]> {
+  const apiKey = process.env.DATATOURISME_API_KEY;
+  if (!apiKey) return [];
 
   try {
-    const artistResponse = await fetch(
-      `https://api.songkick.com/api/3.0/search/artists.json?query=${encodeURIComponent(
-        query
-      )}&apikey=${encodeURIComponent(apiKey)}`,
-      { cache: "no-store", signal: AbortSignal.timeout(REQUEST_TIMEOUT) }
+    const params = new URLSearchParams({
+      page_size: "100",
+      lang: "fr",
+      sort: "lastUpdate[desc]",
+    });
+    if (query) params.set("search", query);
+
+    const response = await fetch(
+      `https://api.datatourisme.fr/v1/entertainmentAndEvent?${params.toString()}`,
+      {
+        headers: { "X-API-Key": apiKey },
+        cache: "no-store",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      }
     );
 
-    if (!artistResponse.ok) return [];
-    const artistPayload = await artistResponse.json();
-    const artist =
-      artistPayload?.resultsPage?.results?.artist?.[0];
+    if (!response.ok) return [];
+    const payload = await response.json();
 
-    if (!artist?.id) return [];
+    return (payload?.objects ?? [])
+      .map((row: any): AppEvent | null => {
+        const title =
+          row.name?.fr ||
+          row.name?.en ||
+          row.name ||
+          row.label?.fr ||
+          row.label;
+        const period =
+          row.periods?.[0] ||
+          row.openingDetails?.periods?.[0] ||
+          row.openingPeriods?.[0];
+        const start =
+          row.startDate ||
+          period?.startDate ||
+          period?.start ||
+          row.temporalCoverage?.startDate;
+        const end =
+          row.endDate ||
+          period?.endDate ||
+          period?.end ||
+          row.temporalCoverage?.endDate;
 
-    const calendarResponse = await fetch(
-      `https://api.songkick.com/api/3.0/artists/${artist.id}/calendar.json?apikey=${encodeURIComponent(
-        apiKey
-      )}`,
-      { cache: "no-store", signal: AbortSignal.timeout(REQUEST_TIMEOUT) }
-    );
+        if (!title || !start) return null;
 
-    if (!calendarResponse.ok) return [];
-    const calendarPayload = await calendarResponse.json();
+        const city =
+          row.address?.city ||
+          row.location?.address?.city ||
+          row.city ||
+          row.inseePlace?.label?.fr;
+        const venue =
+          row.location?.name?.fr ||
+          row.location?.name ||
+          row.place?.name?.fr;
+        const url =
+          row.contact?.website ||
+          row.website ||
+          row.uri ||
+          row["@id"];
 
-    return (calendarPayload?.resultsPage?.results?.event ?? []).map(
-      (row: any): AppEvent => ({
-        id: `songkick-${row.id}`,
-        title: row.displayName,
-        start:
-          row.start?.datetime ||
-          `${row.start?.date || new Date().toISOString().slice(0, 10)}T12:00:00`,
-        venue: row.venue?.displayName,
-        city: row.location?.city,
-        category: "music",
-        source: "Songkick",
-        sourceUrl: "https://www.songkick.com",
-        official: false,
-        url: row.uri,
-        entity: artist.displayName,
+        return {
+          id: `datatourisme-${row.uuid || row.id || row["@id"] || resultsSafeId(title, start)}`,
+          title: String(title),
+          start: String(start).length === 10 ? `${start}T12:00:00` : String(start),
+          end: end ? String(end) : undefined,
+          venue: venue ? String(venue) : undefined,
+          city: city ? String(city) : undefined,
+          country: "France",
+          category: "culture",
+          source: "DATAtourisme",
+          sourceUrl: "https://www.datatourisme.fr/",
+          official: true,
+          url: url ? String(url) : "https://explore.datatourisme.fr",
+          entity: "DATAtourisme",
+          description:
+            row.description?.fr ||
+            row.description?.en ||
+            row.description ||
+            row.shortDescription?.fr,
+        };
       })
-    );
+      .filter((event: AppEvent | null): event is AppEvent => Boolean(event));
   } catch {
     return [];
   }
+}
+
+function resultsSafeId(title: unknown, start: unknown) {
+  return normalize(`${String(title)}-${String(start)}`).replace(/\s+/g, "-");
 }
 
 export function getSourceCatalog(active: Record<string, boolean>): SourceStatus[] {
@@ -588,14 +818,14 @@ export function getSourceCatalog(active: Record<string, boolean>): SourceStatus[
         : "Clé gratuite optionnelle à ajouter",
     },
     {
-      id: "songkick",
-      name: "Songkick",
-      kind: "optional",
-      active: Boolean(active.songkick),
-      url: "https://www.songkick.com",
-      note: process.env.SONGKICK_API_KEY
-        ? "API concerts connectée"
-        : "Clé gratuite optionnelle à ajouter",
+      id: "datatourisme",
+      name: "DATAtourisme",
+      kind: "open-data",
+      active: Boolean(active.datatourisme),
+      url: "https://www.datatourisme.fr/",
+      note: process.env.DATATOURISME_API_KEY
+        ? "API nationale open data connectée"
+        : "Clé API gratuite disponible sur demande",
     },
   ];
 }
