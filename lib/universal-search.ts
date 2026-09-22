@@ -5,6 +5,7 @@ import type {
   VerificationLevel,
 } from "./types";
 
+const TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 const REQUEST_TIMEOUT = 6500;
 
@@ -401,9 +402,58 @@ function dedupe(events: AppEvent[]) {
   });
 }
 
-export async function fetchUniversalWebEvents(
-  intent: SearchIntent
-): Promise<AppEvent[]> {
+async function tavilyCandidates(intent: SearchIntent) {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey || !intent.text) return [];
+
+  const query = [
+    intent.text,
+    intent.city,
+    intent.targetDate,
+    "event agenda calendar official date venue",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  try {
+    const response = await fetch(TAVILY_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        topic: "general",
+        search_depth: "basic",
+        max_results: 12,
+        include_answer: false,
+        include_raw_content: false,
+        include_images: false,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+    });
+
+    if (!response.ok) return [];
+    const payload = await response.json();
+
+    return (payload?.results ?? [])
+      .map((result: any) => ({
+        title: String(result.title ?? ""),
+        description: String(result.content ?? ""),
+        url: String(result.url ?? ""),
+      }))
+      .filter((result: any) =>
+        likelyEventResult(result.title, result.description, result.url)
+      )
+      .slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+async function braveCandidates(intent: SearchIntent) {
   const apiKey = process.env.BRAVE_SEARCH_API_KEY;
   if (!apiKey || !intent.text) return [];
 
@@ -433,26 +483,43 @@ export async function fetchUniversalWebEvents(
     if (!response.ok) return [];
     const payload = await response.json();
 
-    const candidates = (payload?.web?.results ?? [])
+    return (payload?.web?.results ?? [])
+      .map((result: any) => ({
+        title: String(result.title ?? ""),
+        description: String(result.description ?? ""),
+        url: String(result.url ?? ""),
+      }))
       .filter((result: any) =>
-        likelyEventResult(
-          String(result.title ?? ""),
-          String(result.description ?? ""),
-          String(result.url ?? "")
-        )
+        likelyEventResult(result.title, result.description, result.url)
       )
       .slice(0, 8);
-
-    const batches = await Promise.all(
-      candidates.map((result: any) =>
-        fetchEventPage(String(result.url ?? ""), intent.text)
-      )
-    );
-
-    return dedupe(batches.flat()).filter((event) =>
-      eventMatchesDate(event, intent.targetDate, intent.timezone)
-    );
   } catch {
     return [];
   }
+}
+
+export function universalWebProvider() {
+  if (process.env.TAVILY_API_KEY) return "Tavily";
+  if (process.env.BRAVE_SEARCH_API_KEY) return "Brave Search";
+  return null;
+}
+
+export async function fetchUniversalWebEvents(
+  intent: SearchIntent
+): Promise<AppEvent[]> {
+  if (!intent.text) return [];
+
+  const candidates = process.env.TAVILY_API_KEY
+    ? await tavilyCandidates(intent)
+    : await braveCandidates(intent);
+
+  if (!candidates.length) return [];
+
+  const batches = await Promise.all(
+    candidates.map((result) => fetchEventPage(result.url, intent.text))
+  );
+
+  return dedupe(batches.flat()).filter((event) =>
+    eventMatchesDate(event, intent.targetDate, intent.timezone)
+  );
 }
