@@ -17,8 +17,19 @@ export type AppEvent = {
   country?: string;
   category: EventCategory;
   source: string;
+  sourceUrl?: string;
+  official?: boolean;
   url?: string;
   image?: string;
   entity?: string;
   description?: string;
+};
+
+export type SourceStatus = {
+  id: string;
+  name: string;
+  kind: "official" | "open-data" | "community" | "optional";
+  active: boolean;
+  url?: string;
+  note?: string;
 };
