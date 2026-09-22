@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { demoEvents } from "@/lib/demo-events";
+import {
+  fetchOfficialWebEvents,
+  fetchOpenAgenda,
+  fetchParisOpenData,
+  fetchSongkick,
+  getSourceCatalog,
+} from "@/lib/sources";
 import type { AppEvent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +62,9 @@ function normalizeSearch(value: string) {
     .trim()
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function containsQuery(event: AppEvent, query: string) {
@@ -71,6 +80,7 @@ function containsQuery(event: AppEvent, query: string) {
       event.venue,
       event.category,
       event.description,
+      event.source,
     ]
       .filter(Boolean)
       .join(" ")
@@ -88,9 +98,7 @@ function normalizeDate(date?: string, time?: string) {
 function findCuratedTeams(query: string) {
   const needle = normalizeSearch(query);
 
-  if (!needle) {
-    return CURATED_TEAMS.slice(0, 6);
-  }
+  if (!needle) return CURATED_TEAMS.slice(0, 6);
 
   return CURATED_TEAMS.filter((team) => {
     const names = [team.strTeam, ...team.aliases].map(normalizeSearch);
@@ -122,6 +130,8 @@ async function nextEventsForTeam(team: CuratedTeam): Promise<AppEvent[]> {
       country: item.strCountry || undefined,
       category: "sport",
       source: "TheSportsDB",
+      sourceUrl: "https://www.thesportsdb.com",
+      official: false,
       entity: team.strTeam,
       description: [item.strLeague, item.strSeason].filter(Boolean).join(" · "),
       image:
@@ -136,50 +146,17 @@ async function nextEventsForTeam(team: CuratedTeam): Promise<AppEvent[]> {
   }
 }
 
-async function fallbackArsenalSearch(query: string): Promise<AppEvent[]> {
-  if (normalizeSearch(query) !== "arsenal") return [];
-
-  try {
-    const response = await fetch(
-      `https://www.thesportsdb.com/api/v1/json/${SPORTS_API_KEY}/searchteams.php?t=Arsenal`,
-      {
-        cache: "no-store",
-        signal: AbortSignal.timeout(6500),
-      }
-    );
-
-    if (!response.ok) return [];
-
-    const payload = await response.json();
-    const team = payload?.teams?.[0];
-
-    if (!team?.idTeam) return [];
-
-    return nextEventsForTeam({
-      idTeam: team.idTeam,
-      strTeam: team.strTeam || "Arsenal",
-      aliases: ["arsenal"],
-    });
-  } catch {
-    return [];
-  }
-}
-
 async function fetchSportsDb(query: string): Promise<AppEvent[]> {
   const teams = findCuratedTeams(query);
+  if (!teams.length) return [];
 
-  if (teams.length > 0) {
-    const batches = await Promise.all(teams.map(nextEventsForTeam));
-    return batches.flat();
-  }
-
-  return fallbackArsenalSearch(query);
+  const batches = await Promise.all(teams.map(nextEventsForTeam));
+  return batches.flat();
 }
 
 async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
   if (!url || !key) return [];
 
   try {
@@ -213,7 +190,9 @@ async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
         city: row.city ?? undefined,
         country: row.country ?? undefined,
         category: row.category ?? "other",
-        source: "Professionnel",
+        source: "Professionnel vérifié",
+        sourceUrl: row.url ?? undefined,
+        official: true,
         url: row.url ?? undefined,
         image: row.image ?? undefined,
         entity: row.organizer ?? undefined,
@@ -229,6 +208,8 @@ function dedupe(events: AppEvent[]) {
   const seen = new Set<string>();
 
   return events.filter((event) => {
+    if (!event?.title || !event?.start) return false;
+
     const key = [
       normalizeSearch(event.title),
       event.start.slice(0, 10),
@@ -250,29 +231,71 @@ function futureOnly(events: AppEvent[]) {
   });
 }
 
+function sourceActivation(events: AppEvent[]) {
+  const names = new Set(events.map((event) => normalizeSearch(event.source)));
+
+  return {
+    redbull: names.has("red bull events"),
+    formula1: names.has("formula 1"),
+    psg: names.has("paris saint germain"),
+    barcelona: names.has("fc barcelona"),
+    mancity: names.has("manchester city"),
+    liverpool: names.has("liverpool fc"),
+    uefa: names.has("uefa"),
+    ligue1: names.has("ligue 1"),
+    "paris-open-data": names.has("ville de paris open data"),
+    thesportsdb: names.has("thesportsdb"),
+    openagenda: names.has("openagenda"),
+    songkick: names.has("songkick"),
+  };
+}
+
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get("q")?.trim() ?? "";
 
-  const [sports, professional] = await Promise.all([
-    fetchSportsDb(query),
-    fetchProfessionalEvents(query),
-  ]);
+  const [official, sports, paris, openAgenda, songkick, professional] =
+    await Promise.all([
+      fetchOfficialWebEvents(query),
+      fetchSportsDb(query),
+      fetchParisOpenData(query),
+      fetchOpenAgenda(query),
+      fetchSongkick(query),
+      fetchProfessionalEvents(query),
+    ]);
 
-  const live = futureOnly(dedupe([...sports, ...professional])).sort(
+  const liveEvents = futureOnly(
+    dedupe([
+      ...official,
+      ...professional,
+      ...paris,
+      ...openAgenda,
+      ...songkick,
+      ...sports,
+    ])
+  ).sort(
     (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
   );
 
   const fallback = futureOnly(
     demoEvents.filter((event) => containsQuery(event, query))
-  ).sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  ).sort(
+    (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+  );
+
+  const events = liveEvents.length ? liveEvents : fallback;
+  const activation = sourceActivation(liveEvents);
 
   return NextResponse.json({
-    events: live.length ? live : fallback,
-    mode: live.length ? "live" : "demo",
-    sources: {
-      sports: sports.length > 0,
-      professional: professional.length > 0,
+    events,
+    mode: liveEvents.length ? "live" : "demo",
+    sources: activation,
+    sourceCatalog: getSourceCatalog(activation),
+    coverage: {
+      official: official.length,
+      professional: professional.length,
+      openData: paris.length + openAgenda.length,
+      music: songkick.length,
+      sportsBackup: sports.length,
     },
-    sportsProvider: "TheSportsDB",
   });
 }
