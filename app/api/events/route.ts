@@ -1,114 +1,134 @@
 import { NextRequest, NextResponse } from "next/server";
 import { demoEvents } from "@/lib/demo-events";
-import type { AppEvent, EventCategory } from "@/lib/types";
+import type { AppEvent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+const SPORTS_API_KEY = process.env.THESPORTSDB_API_KEY || "123";
+
+const TEAM_ALIASES: Record<string, string> = {
+  "om": "Olympique de Marseille",
+  "marseille": "Olympique de Marseille",
+  "olympique marseille": "Olympique de Marseille",
+  "psg": "Paris SG",
+  "paris": "Paris SG",
+  "real": "Real Madrid",
+  "barca": "Barcelona",
+  "barcelone": "Barcelona",
+  "man city": "Manchester City",
+  "manchester city": "Manchester City",
+  "liverpool": "Liverpool",
+  "bayern": "Bayern Munich",
+};
+
+const DISCOVERY_TEAMS = [
+  "Olympique de Marseille",
+  "Paris SG",
+  "Real Madrid",
+  "Barcelona",
+  "Manchester City",
+  "Liverpool",
+];
+
+function normalizeSearch(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function resolveTeamQuery(query: string) {
+  const normalized = normalizeSearch(query);
+  return TEAM_ALIASES[normalized] || query.trim();
+}
+
 function containsQuery(event: AppEvent, query: string) {
   if (!query) return true;
-  const haystack = [
-    event.title,
-    event.entity,
-    event.city,
-    event.country,
-    event.venue,
-    event.category,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(query.toLowerCase());
+  const needle = normalizeSearch(query);
+  const haystack = normalizeSearch(
+    [
+      event.title,
+      event.entity,
+      event.city,
+      event.country,
+      event.venue,
+      event.category,
+      event.description,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+  return haystack.includes(needle);
 }
 
 function normalizeDate(date?: string, time?: string) {
   if (!date) return new Date().toISOString();
-  if (time) return `${date}T${time}`;
-  return `${date}T12:00:00`;
+  const safeTime = time && /^\d{2}:\d{2}/.test(time) ? time : "12:00:00";
+  return `${date}T${safeTime}`;
 }
 
-async function fetchTicketmaster(query: string): Promise<AppEvent[]> {
-  const apiKey = process.env.TICKETMASTER_API_KEY;
-  if (!apiKey) return [];
-
-  const params = new URLSearchParams({
-    apikey: apiKey,
-    size: "40",
-    sort: "date,asc",
-  });
-  if (query) params.set("keyword", query);
-
+async function searchTeams(query: string) {
   const response = await fetch(
-    `https://app.ticketmaster.com/discovery/v2/events.json?${params.toString()}`,
+    `https://www.thesportsdb.com/api/v1/json/${SPORTS_API_KEY}/searchteams.php?t=${encodeURIComponent(resolveTeamQuery(query))}`,
     { cache: "no-store" }
   );
+
   if (!response.ok) return [];
-
   const payload = await response.json();
-  const items = payload?._embedded?.events ?? [];
+  return (payload?.teams ?? []).slice(0, 3);
+}
 
-  return items.map((item: any): AppEvent => {
-    const segment = item?.classifications?.[0]?.segment?.name?.toLowerCase() ?? "";
-    let category: EventCategory = "other";
-    if (segment.includes("sport")) category = "sport";
-    else if (segment.includes("music")) category = "music";
-    else if (segment.includes("art")) category = "culture";
+async function nextEventsForTeam(team: any): Promise<AppEvent[]> {
+  const response = await fetch(
+    `https://www.thesportsdb.com/api/v1/json/${SPORTS_API_KEY}/eventsnext.php?id=${team.idTeam}`,
+    { cache: "no-store" }
+  );
 
-    const venue = item?._embedded?.venues?.[0];
+  if (!response.ok) return [];
+  const payload = await response.json();
 
-    return {
-      id: `ticketmaster-${item.id}`,
-      title: item.name,
-      start: normalizeDate(item?.dates?.start?.localDate, item?.dates?.start?.localTime),
-      venue: venue?.name,
-      city: venue?.city?.name,
-      country: venue?.country?.name,
-      category,
-      source: "Ticketmaster",
-      url: item.url,
-      image: item?.images?.find((image: any) => image.ratio === "16_9")?.url ?? item?.images?.[0]?.url,
-      entity: item?.promoter?.name ?? item?.name,
-    };
-  });
+  return (payload?.events ?? []).map((item: any): AppEvent => ({
+    id: `sportsdb-${item.idEvent}`,
+    title: item.strEvent,
+    start: normalizeDate(item.dateEvent, item.strTime),
+    venue: item.strVenue || undefined,
+    city: item.strCity || undefined,
+    country: item.strCountry || team.strCountry || undefined,
+    category: "sport",
+    source: "TheSportsDB",
+    entity: team.strTeam,
+    description: [item.strLeague, item.strSeason].filter(Boolean).join(" · "),
+    image:
+      item.strThumb ||
+      item.strPoster ||
+      team.strBanner ||
+      team.strFanart1 ||
+      team.strBadge ||
+      undefined,
+  }));
 }
 
 async function fetchSportsDb(query: string): Promise<AppEvent[]> {
-  const apiKey = process.env.THESPORTSDB_API_KEY;
-  if (!apiKey || !query) return [];
+  try {
+    if (query) {
+      const teams = await searchTeams(query);
+      const batches = await Promise.all(teams.map(nextEventsForTeam));
+      return batches.flat();
+    }
 
-  const teamResponse = await fetch(
-    `https://www.thesportsdb.com/api/v1/json/${apiKey}/searchteams.php?t=${encodeURIComponent(query)}`,
-    { cache: "no-store" }
-  );
-  if (!teamResponse.ok) return [];
+    const teamBatches = await Promise.all(
+      DISCOVERY_TEAMS.map(async (teamName) => {
+        const teams = await searchTeams(teamName);
+        if (!teams[0]) return [];
+        return nextEventsForTeam(teams[0]);
+      })
+    );
 
-  const teamPayload = await teamResponse.json();
-  const teams = (teamPayload?.teams ?? []).slice(0, 3);
-
-  const batches = await Promise.all(
-    teams.map(async (team: any) => {
-      const response = await fetch(
-        `https://www.thesportsdb.com/api/v1/json/${apiKey}/eventsnext.php?id=${team.idTeam}`,
-        { cache: "no-store" }
-      );
-      if (!response.ok) return [];
-      const payload = await response.json();
-
-      return (payload?.events ?? []).map((item: any): AppEvent => ({
-        id: `sportsdb-${item.idEvent}`,
-        title: item.strEvent,
-        start: normalizeDate(item.dateEvent, item.strTime),
-        venue: item.strVenue || undefined,
-        city: item.strCity || undefined,
-        country: item.strCountry || undefined,
-        category: "sport",
-        source: "TheSportsDB",
-        entity: team.strTeam,
-        description: item.strLeague,
-      }));
-    })
-  );
-
-  return batches.flat();
+    return teamBatches.flat();
+  } catch {
+    return [];
+  }
 }
 
 async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
@@ -116,76 +136,92 @@ async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return [];
 
-  const params = new URLSearchParams({
-    select: "*",
-    order: "start.asc",
-    limit: "100",
-  });
+  try {
+    const params = new URLSearchParams({
+      select: "*",
+      order: "start.asc",
+      limit: "100",
+    });
 
-  const response = await fetch(`${url}/rest/v1/pro_events?${params.toString()}`, {
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-    },
-    cache: "no-store",
-  });
+    const response = await fetch(`${url}/rest/v1/pro_events?${params.toString()}`, {
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
+      cache: "no-store",
+    });
 
-  if (!response.ok) return [];
+    if (!response.ok) return [];
 
-  const rows = await response.json();
-  return rows
-    .map((row: any): AppEvent => ({
-      id: `pro-${row.id}`,
-      title: row.title,
-      start: row.start,
-      end: row.end ?? undefined,
-      venue: row.venue ?? undefined,
-      city: row.city ?? undefined,
-      country: row.country ?? undefined,
-      category: row.category ?? "other",
-      source: "Professionnel",
-      url: row.url ?? undefined,
-      image: row.image ?? undefined,
-      entity: row.organizer ?? undefined,
-      description: row.description ?? undefined,
-    }))
-    .filter((event: AppEvent) => containsQuery(event, query));
+    const rows = await response.json();
+
+    return rows
+      .filter((row: any) => row.status === "approved" || !row.status)
+      .map((row: any): AppEvent => ({
+        id: `pro-${row.id}`,
+        title: row.title,
+        start: row.start,
+        end: row.end ?? undefined,
+        venue: row.venue ?? undefined,
+        city: row.city ?? undefined,
+        country: row.country ?? undefined,
+        category: row.category ?? "other",
+        source: "Professionnel",
+        url: row.url ?? undefined,
+        image: row.image ?? undefined,
+        entity: row.organizer ?? undefined,
+        description: row.description ?? undefined,
+      }))
+      .filter((event: AppEvent) => containsQuery(event, query));
+  } catch {
+    return [];
+  }
 }
 
 function dedupe(events: AppEvent[]) {
   const seen = new Set<string>();
+
   return events.filter((event) => {
     const key = [
-      event.title.toLowerCase().replace(/\s+/g, " ").trim(),
+      normalizeSearch(event.title),
       event.start.slice(0, 10),
-      event.city?.toLowerCase() ?? "",
+      normalizeSearch(event.city ?? ""),
     ].join("|");
+
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 }
 
+function futureOnly(events: AppEvent[]) {
+  const yesterday = Date.now() - 24 * 60 * 60 * 1000;
+  return events.filter((event) => {
+    const value = new Date(event.start).getTime();
+    return Number.isNaN(value) || value >= yesterday;
+  });
+}
+
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get("q")?.trim() ?? "";
 
-  const [ticketmaster, sports, professional] = await Promise.all([
-    fetchTicketmaster(query),
+  const [sports, professional] = await Promise.all([
     fetchSportsDb(query),
     fetchProfessionalEvents(query),
   ]);
 
-  const live = [...ticketmaster, ...sports, ...professional];
-  const fallback = demoEvents.filter((event) => containsQuery(event, query));
-  const events = dedupe(live.length ? [...live, ...professional] : fallback).sort(
+  const live = futureOnly(dedupe([...sports, ...professional])).sort(
     (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
   );
 
+  const fallback = futureOnly(
+    demoEvents.filter((event) => containsQuery(event, query))
+  ).sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
   return NextResponse.json({
-    events,
+    events: live.length ? live : fallback,
     mode: live.length ? "live" : "demo",
     sources: {
-      ticketmaster: ticketmaster.length > 0,
       sports: sports.length > 0,
       professional: professional.length > 0,
     },
