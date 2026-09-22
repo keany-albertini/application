@@ -4,14 +4,15 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  CircleUserRound,
   Clock3,
+  Compass,
   Heart,
   MapPin,
   Plus,
   Search,
   Sparkles,
   Star,
+  Trophy,
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -23,13 +24,15 @@ type ApiResponse = {
   sources: Record<string, boolean>;
 };
 
+type View = "calendar" | "explore" | "favorites";
+
 const QUICK_SEARCHES = [
   "Olympique de Marseille",
+  "PSG",
+  "Real Madrid",
+  "Barcelona",
+  "Manchester City",
   "Red Bull",
-  "Concerts",
-  "Formula 1",
-  "NBA",
-  "Gaming",
 ];
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -52,6 +55,7 @@ function sameDay(a: Date, b: Date) {
 
 function formatEventDate(value: string) {
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date à confirmer";
   return new Intl.DateTimeFormat("fr-FR", {
     weekday: "short",
     day: "numeric",
@@ -76,6 +80,7 @@ export default function Home() {
   const [month, setMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [view, setView] = useState<View>("calendar");
   const [showPublish, setShowPublish] = useState(false);
   const [publishMessage, setPublishMessage] = useState("");
 
@@ -92,14 +97,20 @@ export default function Home() {
   async function loadEvents(term: string) {
     setLoading(true);
     try {
-      const response = await fetch(`/api/events?q=${encodeURIComponent(term)}`);
+      const response = await fetch(`/api/events?q=${encodeURIComponent(term)}`, {
+        cache: "no-store",
+      });
       const payload: ApiResponse = await response.json();
       setEvents(payload.events ?? []);
       setMode(payload.mode ?? "demo");
+
       if (payload.events?.[0]) {
         const next = new Date(payload.events[0].start);
         if (!Number.isNaN(next.getTime())) setMonth(next);
       }
+    } catch {
+      setEvents([]);
+      setMode("demo");
     } finally {
       setLoading(false);
     }
@@ -108,12 +119,14 @@ export default function Home() {
   function submitSearch(event: FormEvent) {
     event.preventDefault();
     setSelectedDay(null);
+    setView("explore");
     void loadEvents(query);
   }
 
   function quickSearch(term: string) {
     setQuery(term);
     setSelectedDay(null);
+    setView("explore");
     void loadEvents(term);
   }
 
@@ -127,6 +140,13 @@ export default function Home() {
     });
   }
 
+  function resetDiscovery() {
+    setQuery("");
+    setSelectedDay(null);
+    setView("calendar");
+    void loadEvents("");
+  }
+
   const calendarDays = useMemo(() => {
     const year = month.getFullYear();
     const monthIndex = month.getMonth();
@@ -134,21 +154,37 @@ export default function Home() {
     const last = new Date(year, monthIndex + 1, 0);
     const mondayOffset = (first.getDay() + 6) % 7;
     const days: Array<Date | null> = Array(mondayOffset).fill(null);
+
     for (let day = 1; day <= last.getDate(); day++) {
       days.push(new Date(year, monthIndex, day));
     }
+
     while (days.length % 7) days.push(null);
     return days;
   }, [month]);
 
   const visibleEvents = useMemo(() => {
-    if (!selectedDay) return events;
-    return events.filter((event) => sameDay(new Date(event.start), selectedDay));
-  }, [events, selectedDay]);
+    let current = events;
+
+    if (view === "favorites") {
+      current = current.filter((event) => favorites.includes(event.id));
+    }
+
+    if (selectedDay) {
+      current = current.filter((event) =>
+        sameDay(new Date(event.start), selectedDay)
+      );
+    }
+
+    return current;
+  }, [events, favorites, selectedDay, view]);
+
+  const nextEvent = visibleEvents[0];
 
   async function publish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPublishMessage("Envoi…");
+
     const form = new FormData(event.currentTarget);
     const payload = Object.fromEntries(form.entries());
 
@@ -157,10 +193,14 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+
     const result = await response.json();
 
     if (!response.ok) {
-      setPublishMessage(result.error ?? "Publication indisponible.");
+      setPublishMessage(
+        result.error ??
+          "La publication pro sera disponible dès que la base sera connectée."
+      );
       return;
     }
 
@@ -171,28 +211,36 @@ export default function Home() {
   return (
     <main className="app-shell">
       <header className="hero">
-        <div className="topline">
-          <div>
-            <p className="eyebrow">CALENDRIER MONDIAL</p>
-            <h1>Application</h1>
+        <div className="brand-row">
+          <div className="brand-mark">
+            <CalendarDays size={18} />
           </div>
-          <button className="icon-button" aria-label="Profil">
-            <CircleUserRound size={23} />
-          </button>
+          <div className="brand-copy">
+            <strong>Application</strong>
+            <span>Tout ce qui arrive, au même endroit.</span>
+          </div>
+          <div className={`connection-badge ${mode === "live" ? "online" : ""}`}>
+            <span />
+            {mode === "live" ? "À jour" : "Démo"}
+          </div>
         </div>
 
-        <p className="hero-copy">
-          Un seul endroit pour suivre les matchs, concerts, marques, salons,
-          festivals et événements qui comptent.
-        </p>
+        <div className="hero-title">
+          <p className="eyebrow">TON CALENDRIER GLOBAL</p>
+          <h1>Ne rate plus rien.</h1>
+          <p>
+            Matchs, événements de marques, concerts, festivals et rendez-vous
+            professionnels dans un calendrier unique.
+          </p>
+        </div>
 
         <form className="search-box" onSubmit={submitSearch}>
           <Search size={20} />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="OM, Red Bull, artiste, événement…"
-            aria-label="Rechercher des événements"
+            placeholder="OM, PSG, Red Bull, artiste…"
+            aria-label="Rechercher"
           />
           {query && (
             <button
@@ -211,6 +259,7 @@ export default function Home() {
             <button
               key={item}
               className="chip"
+              type="button"
               onClick={() => quickSearch(item)}
             >
               {item}
@@ -219,45 +268,90 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="status-row">
-        <div className={`live-pill ${mode === "live" ? "online" : ""}`}>
-          <span className="pulse" />
-          {mode === "live" ? "Sources Internet actives" : "Mode démo — sources à connecter"}
+      <section className="overview-grid">
+        <div className="overview-card">
+          <span className="overview-icon">
+            <Trophy size={18} />
+          </span>
+          <div>
+            <strong>{events.filter((event) => event.category === "sport").length}</strong>
+            <span>événements sport</span>
+          </div>
         </div>
-        <button className="publish-link" onClick={() => setShowPublish(true)}>
-          <Plus size={17} />
-          Publier
-        </button>
+        <div className="overview-card">
+          <span className="overview-icon">
+            <Heart size={18} />
+          </span>
+          <div>
+            <strong>{favorites.length}</strong>
+            <span>favoris</span>
+          </div>
+        </div>
+      </section>
+
+      {nextEvent && view !== "favorites" && !selectedDay && (
+        <section
+          className="spotlight"
+          style={
+            nextEvent.image
+              ? {
+                  backgroundImage: `linear-gradient(90deg, rgba(8,9,13,.96), rgba(8,9,13,.58)), url("${nextEvent.image}")`,
+                }
+              : undefined
+          }
+        >
+          <p className="section-kicker">PROCHAIN ÉVÉNEMENT</p>
+          <h2>{nextEvent.title}</h2>
+          <div className="spotlight-info">
+            <span>
+              <Clock3 size={15} />
+              {formatEventDate(nextEvent.start)}
+            </span>
+            {(nextEvent.venue || nextEvent.city) && (
+              <span>
+                <MapPin size={15} />
+                {[nextEvent.venue, nextEvent.city].filter(Boolean).join(" · ")}
+              </span>
+            )}
+          </div>
+        </section>
+      )}
+
+      <section className="section-row">
+        <div>
+          <p className="section-kicker">CALENDRIER</p>
+          <h2>{monthLabel(month)}</h2>
+        </div>
+        <div className="month-actions">
+          <button
+            className="mini-button"
+            onClick={() =>
+              setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))
+            }
+            aria-label="Mois précédent"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <button
+            className="mini-button"
+            onClick={() => setMonth(new Date())}
+            aria-label="Aujourd’hui"
+          >
+            <span className="today-label">Aujourd’hui</span>
+          </button>
+          <button
+            className="mini-button"
+            onClick={() =>
+              setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))
+            }
+            aria-label="Mois suivant"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
       </section>
 
       <section className="calendar-card">
-        <div className="calendar-head">
-          <div>
-            <p className="section-kicker">CALENDRIER</p>
-            <h2>{monthLabel(month)}</h2>
-          </div>
-          <div className="month-actions">
-            <button
-              className="mini-button"
-              onClick={() =>
-                setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))
-              }
-              aria-label="Mois précédent"
-            >
-              <ChevronLeft size={18} />
-            </button>
-            <button
-              className="mini-button"
-              onClick={() =>
-                setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))
-              }
-              aria-label="Mois suivant"
-            >
-              <ChevronRight size={18} />
-            </button>
-          </div>
-        </div>
-
         <div className="weekdays">
           {["L", "M", "M", "J", "V", "S", "D"].map((day, index) => (
             <span key={`${day}-${index}`}>{day}</span>
@@ -267,6 +361,7 @@ export default function Home() {
         <div className="calendar-grid">
           {calendarDays.map((day, index) => {
             if (!day) return <span className="day empty" key={`e-${index}`} />;
+
             const dayEvents = events.filter((event) =>
               sameDay(new Date(event.start), day)
             );
@@ -296,21 +391,26 @@ export default function Home() {
       <section className="feed">
         <div className="feed-head">
           <div>
-            <p className="section-kicker">À VENIR</p>
+            <p className="section-kicker">
+              {view === "favorites" ? "TES FAVORIS" : "À VENIR"}
+            </p>
             <h2>
-              {selectedDay
-                ? new Intl.DateTimeFormat("fr-FR", {
-                    day: "numeric",
-                    month: "long",
-                  }).format(selectedDay)
-                : query
-                  ? `Résultats pour “${query}”`
-                  : "Événements populaires"}
+              {view === "favorites"
+                ? "Événements enregistrés"
+                : selectedDay
+                  ? new Intl.DateTimeFormat("fr-FR", {
+                      day: "numeric",
+                      month: "long",
+                    }).format(selectedDay)
+                  : query
+                    ? `Résultats pour “${query}”`
+                    : "À découvrir"}
             </h2>
           </div>
-          {selectedDay && (
-            <button className="text-button" onClick={() => setSelectedDay(null)}>
-              Tout voir
+
+          {(selectedDay || query || view === "favorites") && (
+            <button className="text-button" onClick={resetDiscovery}>
+              Réinitialiser
             </button>
           )}
         </div>
@@ -318,18 +418,27 @@ export default function Home() {
         {loading ? (
           <div className="loading-card">
             <Sparkles size={22} />
-            Recherche des événements…
+            Mise à jour du calendrier…
           </div>
         ) : visibleEvents.length === 0 ? (
           <div className="empty-card">
             <CalendarDays size={28} />
-            <strong>Aucun événement trouvé</strong>
-            <span>Essaie une autre recherche ou une autre date.</span>
+            <strong>
+              {view === "favorites"
+                ? "Aucun favori pour l’instant"
+                : "Aucun événement trouvé"}
+            </strong>
+            <span>
+              {view === "favorites"
+                ? "Ajoute un cœur à un événement pour le retrouver ici."
+                : "Essaie une autre recherche."}
+            </span>
           </div>
         ) : (
           <div className="event-list">
-            {visibleEvents.slice(0, 40).map((event) => {
+            {visibleEvents.slice(0, 50).map((event) => {
               const isFavorite = favorites.includes(event.id);
+
               return (
                 <article className="event-card" key={event.id}>
                   <div className={`category-mark category-${event.category}`} />
@@ -340,12 +449,15 @@ export default function Home() {
                       </span>
                       <span className="source">{event.source}</span>
                     </div>
+
                     <h3>{event.title}</h3>
+
                     <div className="event-info">
                       <span>
                         <Clock3 size={15} />
                         {formatEventDate(event.start)}
                       </span>
+
                       {(event.venue || event.city) && (
                         <span>
                           <MapPin size={15} />
@@ -353,13 +465,16 @@ export default function Home() {
                         </span>
                       )}
                     </div>
+
                     {event.description && <p>{event.description}</p>}
+
                     {event.url && (
                       <a href={event.url} target="_blank" rel="noreferrer">
-                        Voir l’événement
+                        Voir la source
                       </a>
                     )}
                   </div>
+
                   <button
                     className={`favorite-button ${isFavorite ? "saved" : ""}`}
                     onClick={() => toggleFavorite(event.id)}
@@ -374,20 +489,38 @@ export default function Home() {
         )}
       </section>
 
+      <button className="floating-publish" onClick={() => setShowPublish(true)}>
+        <Plus size={19} />
+        Publier un événement
+      </button>
+
       <nav className="bottom-nav" aria-label="Navigation principale">
-        <button className="nav-item active">
+        <button
+          className={`nav-item ${view === "calendar" ? "active" : ""}`}
+          onClick={() => {
+            setView("calendar");
+            setSelectedDay(null);
+          }}
+        >
           <CalendarDays size={20} />
           <span>Calendrier</span>
         </button>
-        <button className="nav-item" onClick={() => document.querySelector("input")?.focus()}>
-          <Search size={20} />
+
+        <button
+          className={`nav-item ${view === "explore" ? "active" : ""}`}
+          onClick={() => {
+            setView("explore");
+            document.querySelector<HTMLInputElement>(".search-box input")?.focus();
+          }}
+        >
+          <Compass size={20} />
           <span>Explorer</span>
         </button>
+
         <button
-          className="nav-item"
+          className={`nav-item ${view === "favorites" ? "active" : ""}`}
           onClick={() => {
-            const saved = events.filter((event) => favorites.includes(event.id));
-            setEvents(saved);
+            setView("favorites");
             setSelectedDay(null);
           }}
         >
@@ -398,14 +531,21 @@ export default function Home() {
 
       {showPublish && (
         <div className="modal-backdrop" onClick={() => setShowPublish(false)}>
-          <section className="publish-sheet" onClick={(event) => event.stopPropagation()}>
+          <section
+            className="publish-sheet"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="sheet-handle" />
+
             <div className="sheet-head">
               <div>
                 <p className="section-kicker">ESPACE PRO</p>
                 <h2>Publier un événement</h2>
               </div>
-              <button className="icon-button" onClick={() => setShowPublish(false)}>
+              <button
+                className="icon-button"
+                onClick={() => setShowPublish(false)}
+              >
                 <X size={20} />
               </button>
             </div>
@@ -415,15 +555,18 @@ export default function Home() {
                 Organisateur
                 <input name="organizer" placeholder="Nom de l’organisation" />
               </label>
+
               <label>
                 Titre
                 <input name="title" required placeholder="Nom de l’événement" />
               </label>
+
               <div className="form-row">
                 <label>
                   Date et heure
                   <input name="start" type="datetime-local" required />
                 </label>
+
                 <label>
                   Catégorie
                   <select name="category" defaultValue="other">
@@ -437,10 +580,12 @@ export default function Home() {
                   </select>
                 </label>
               </div>
+
               <label>
                 Lieu
                 <input name="venue" placeholder="Stade, salle, circuit…" />
               </label>
+
               <div className="form-row">
                 <label>
                   Ville
@@ -451,18 +596,28 @@ export default function Home() {
                   <input name="country" placeholder="France" />
                 </label>
               </div>
+
               <label>
                 Lien officiel
                 <input name="url" type="url" placeholder="https://…" />
               </label>
+
               <label>
                 Description
-                <textarea name="description" rows={3} placeholder="Informations utiles…" />
+                <textarea
+                  name="description"
+                  rows={3}
+                  placeholder="Informations utiles…"
+                />
               </label>
+
               <button className="primary-button" type="submit">
                 Envoyer l’événement
               </button>
-              {publishMessage && <p className="publish-message">{publishMessage}</p>}
+
+              {publishMessage && (
+                <p className="publish-message">{publishMessage}</p>
+              )}
             </form>
           </section>
         </div>
