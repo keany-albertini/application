@@ -921,8 +921,8 @@ export function getSourceCatalog(active: Record<string, boolean>): SourceStatus[
       active: Boolean(active["tavily-search"]),
       url: "https://www.tavily.com/",
       note: process.env.TAVILY_API_KEY
-        ? "Recherche universelle gratuite connectée"
-        : "Clé Tavily gratuite à ajouter pour les marques et sujets universels",
+        ? "Recherche universelle Tavily connectée"
+        : "Mode Tavily keyless gratuit — débit limité",
     },
     {
       id: "brave-search",
