@@ -154,11 +154,18 @@ export function eventMatchesDate(
   if (!targetDate) return true;
 
   const parsed = new Date(event.start);
-  if (Number.isNaN(parsed.getTime())) {
-    return event.start.slice(0, 10) === targetDate;
-  }
+  const startDate = Number.isNaN(parsed.getTime())
+    ? event.start.slice(0, 10)
+    : dateInTimeZone(parsed, timezone);
 
-  return dateInTimeZone(parsed, timezone) === targetDate;
+  if (!event.end) return startDate === targetDate;
+
+  const parsedEnd = new Date(event.end);
+  const endDate = Number.isNaN(parsedEnd.getTime())
+    ? event.end.slice(0, 10)
+    : dateInTimeZone(parsedEnd, timezone);
+
+  return targetDate >= startDate && targetDate <= endDate;
 }
 
 function asText(value: unknown): string | undefined {
