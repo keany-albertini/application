@@ -11,6 +11,7 @@ import {
   eventMatchesDate,
   fetchUniversalWebEvents,
   parseSearchIntent,
+  universalWebProvider,
 } from "@/lib/universal-search";
 import type { AppEvent, VerificationLevel } from "@/lib/types";
 
@@ -316,11 +317,12 @@ function sourceActivation(events: AppEvent[]) {
     thesportsdb: names.has("thesportsdb"),
     openagenda: [...names].some((name) => name.includes("openagenda")),
     datatourisme: names.has("datatourisme"),
-    "brave-search": events.some(
-      (event) =>
-        event.verification === "verified-web" &&
-        event.id.startsWith("web-")
-    ),
+    "tavily-search":
+      universalWebProvider() === "Tavily" &&
+      events.some((event) => event.id.startsWith("web-")),
+    "brave-search":
+      universalWebProvider() === "Brave Search" &&
+      events.some((event) => event.id.startsWith("web-")),
   };
 }
 
@@ -418,7 +420,10 @@ export async function GET(request: NextRequest) {
     },
     universalSearch: {
       enabled: true,
-      webDiscoveryConfigured: Boolean(process.env.BRAVE_SEARCH_API_KEY),
+      webDiscoveryConfigured: Boolean(
+        process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY
+      ),
+      webProvider: universalWebProvider(),
       openAgendaConfigured: Boolean(process.env.OPENAGENDA_API_KEY),
       dataTourismeConfigured: Boolean(process.env.DATATOURISME_API_KEY),
     },
