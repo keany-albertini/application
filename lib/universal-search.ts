@@ -50,6 +50,12 @@ const INSTITUTIONAL_SUFFIXES = [
   ".bordeaux.fr",
 ];
 
+type SearchCandidate = {
+  title: string;
+  description: string;
+  url: string;
+};
+
 const EVENT_WORDS = [
   "event",
   "events",
@@ -402,7 +408,7 @@ function dedupe(events: AppEvent[]) {
   });
 }
 
-async function tavilyCandidates(intent: SearchIntent) {
+async function tavilyCandidates(intent: SearchIntent): Promise<SearchCandidate[]> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey || !intent.text) return [];
 
@@ -453,7 +459,7 @@ async function tavilyCandidates(intent: SearchIntent) {
   }
 }
 
-async function braveCandidates(intent: SearchIntent) {
+async function braveCandidates(intent: SearchIntent): Promise<SearchCandidate[]> {
   const apiKey = process.env.BRAVE_SEARCH_API_KEY;
   if (!apiKey || !intent.text) return [];
 
@@ -516,7 +522,9 @@ export async function fetchUniversalWebEvents(
   if (!candidates.length) return [];
 
   const batches = await Promise.all(
-    candidates.map((result) => fetchEventPage(result.url, intent.text))
+    candidates.map((result: SearchCandidate) =>
+      fetchEventPage(result.url, intent.text)
+    )
   );
 
   return dedupe(batches.flat()).filter((event) =>
