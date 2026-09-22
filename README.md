@@ -13,12 +13,16 @@ Calendrier mobile global qui agrège des événements provenant en priorité de 
 - Liverpool FC — calendrier officiel
 - UEFA — calendrier/fixtures officiels
 - Ligue 1 — site officiel
+- Formula E — calendrier officiel
+- NBA — calendrier officiel
+- NHL — calendrier officiel
+- UFC — événements officiels
 - Ville de Paris Open Data — agenda public
 - TheSportsDB — secours sportif gratuit avec la clé publique `123`
 
 ### Gratuites mais avec clé à demander
 - OpenAgenda — événements culturels et territoriaux
-- Songkick — concerts et tournées
+- DATAtourisme — base nationale française des événements touristiques, clé API gratuite sur demande
 
 ### Notre propre source
 - Supabase — événements publiés par les professionnels et validés par notre plateforme
@@ -28,7 +32,7 @@ Calendrier mobile global qui agrège des événements provenant en priorité de 
 ```bash
 THESPORTSDB_API_KEY=123
 OPENAGENDA_API_KEY=
-SONGKICK_API_KEY=
+DATATOURISME_API_KEY=
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
