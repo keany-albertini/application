@@ -486,7 +486,7 @@ export async function fetchOpenAgenda(query: string): Promise<AppEvent[]> {
               : row.description?.fr || row.description?.en,
         };
       })
-      .filter(Boolean)
+      .filter((event: AppEvent | null): event is AppEvent => Boolean(event))
       .filter((event: AppEvent) => {
         if (!query) return true;
         return normalize(
