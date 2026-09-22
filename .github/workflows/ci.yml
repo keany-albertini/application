@@ -1,5 +1,5 @@
 name: CI
-# V0.3 source integration build
+# V0.3 final source integration build
 
 on:
   push:
