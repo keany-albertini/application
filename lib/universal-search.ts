@@ -247,12 +247,25 @@ function rootHost(url: string) {
   }
 }
 
-function verificationForUrl(url: string): VerificationLevel {
+function verificationForUrl(
+  url: string,
+  searchText = ""
+): VerificationLevel {
   const host = rootHost(url);
   if (TRUSTED_OFFICIAL_HOSTS.has(host)) return "official";
   if (INSTITUTIONAL_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
     return "institutional";
   }
+
+  const domainLabel = normalize(host.split(".")[0] ?? "");
+  const query = normalize(searchText);
+  if (
+    domainLabel.length >= 3 &&
+    query.split(" ").some((token) => token === domainLabel)
+  ) {
+    return "official";
+  }
+
   return "verified-web";
 }
 
@@ -274,7 +287,7 @@ function extractJsonLdEventsFromHtml(
       /<script[^>]+type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi
     ) ?? [];
 
-  const verification = verificationForUrl(pageUrl);
+  const verification = verificationForUrl(pageUrl, searchText);
   const source = sourceNameFromUrl(pageUrl);
   const events: AppEvent[] = [];
 
@@ -351,7 +364,7 @@ function extractMetaEvent(html: string, pageUrl: string, searchText: string) {
 
   if (!title) return [];
 
-  const verification = verificationForUrl(pageUrl);
+  const verification = verificationForUrl(pageUrl, searchText);
 
   return [
     {
@@ -372,6 +385,237 @@ function extractMetaEvent(html: string, pageUrl: string, searchText: string) {
 function likelyEventResult(title: string, description: string, url: string) {
   const haystack = normalize(`${title} ${description} ${url}`);
   return EVENT_WORDS.some((word) => haystack.includes(normalize(word)));
+}
+
+
+const MONTH_NUMBER: Record<string, number> = {
+  january: 1, jan: 1, janvier: 1,
+  february: 2, feb: 2, fevrier: 2, février: 2,
+  march: 3, mar: 3, mars: 3,
+  april: 4, apr: 4, avril: 4,
+  may: 5, mai: 5,
+  june: 6, jun: 6, juin: 6,
+  july: 7, jul: 7, juillet: 7,
+  august: 8, aug: 8, aout: 8, août: 8,
+  september: 9, sep: 9, sept: 9, septembre: 9,
+  october: 10, oct: 10, octobre: 10,
+  november: 11, nov: 11, novembre: 11,
+  december: 12, dec: 12, decembre: 12, décembre: 12,
+};
+
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function isoLocal(
+  year: number,
+  month: number,
+  day: number,
+  hour = 12,
+  minute = 0
+) {
+  return `${year}-${pad2(month)}-${pad2(day)}T${pad2(hour)}:${pad2(minute)}:00`;
+}
+
+function parseClock(
+  hourText?: string,
+  minuteText?: string,
+  meridiem?: string
+): [number, number] {
+  let hour = Number(hourText || 12);
+  const minute = Number(minuteText || 0);
+  const marker = (meridiem || "").toUpperCase();
+
+  if (marker === "PM" && hour < 12) hour += 12;
+  if (marker === "AM" && hour === 12) hour = 0;
+
+  return [hour, minute];
+}
+
+function chooseTextTitle(raw: string, fallback: string) {
+  const generic = [
+    "know before you go",
+    "location",
+    "details",
+    "event details",
+    "important information",
+  ];
+
+  const headings = raw
+    .split(/\r?\n/)
+    .map((line) => line.match(/^#{1,4}\s+(.{3,140})$/)?.[1]?.trim())
+    .filter((value): value is string => Boolean(value));
+
+  return (
+    headings.find(
+      (heading) =>
+        !generic.some((item) => normalize(heading).includes(normalize(item)))
+    ) ||
+    fallback ||
+    "Événement"
+  );
+}
+
+function cityFromText(raw: string) {
+  const us = raw.match(
+    /,\s*([A-Z][A-Za-z .'-]{2,40}),\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?(?:,\s*USA)?/
+  );
+  if (us?.[1]) return us[1].trim();
+
+  const fr = raw.match(/\b\d{5}\s+([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÿ .'-]{2,40})(?:,\s*France)?/);
+  if (fr?.[1]) return fr[1].trim();
+
+  return undefined;
+}
+
+function parsePlainTextEvent(
+  raw: string,
+  candidate: SearchCandidate,
+  searchText: string
+): AppEvent[] {
+  if (!raw || raw.length < 30) return [];
+
+  const verification = verificationForUrl(candidate.url, searchText);
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  const english =
+    raw.match(
+      /(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?[,]?\s*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*(?:–|-|—|to)\s*(?:(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?[,]?\s*)?(?:(January|February|March|April|May|June|July|August|September|October|November|December)\s+)?(\d{1,2})(?:st|nd|rd|th)?)?(?:[,]?\s*(20\d{2}))?/i
+    );
+
+  const french =
+    raw.match(
+      /(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)?\s*(\d{1,2})(?:er)?\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)(?:\s*(?:–|-|—|au|à)\s*(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)?\s*(\d{1,2})(?:er)?(?:\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre))?)?(?:\s+(20\d{2}))?/i
+    );
+
+  let startMonth: number | undefined;
+  let startDay: number | undefined;
+  let endMonth: number | undefined;
+  let endDay: number | undefined;
+  let year = currentYear;
+  let matchIndex = -1;
+  let matchedText = "";
+
+  if (english) {
+    startMonth = MONTH_NUMBER[normalize(english[1])];
+    startDay = Number(english[2]);
+    endMonth = english[3]
+      ? MONTH_NUMBER[normalize(english[3])]
+      : startMonth;
+    endDay = english[4] ? Number(english[4]) : undefined;
+    if (english[5]) year = Number(english[5]);
+    matchIndex = english.index ?? -1;
+    matchedText = english[0];
+  } else if (french) {
+    startDay = Number(french[1]);
+    startMonth = MONTH_NUMBER[normalize(french[2])];
+    endDay = french[3] ? Number(french[3]) : undefined;
+    endMonth = french[4]
+      ? MONTH_NUMBER[normalize(french[4])]
+      : startMonth;
+    if (french[5]) year = Number(french[5]);
+    matchIndex = french.index ?? -1;
+    matchedText = french[0];
+  }
+
+  if (!startMonth || !startDay) return [];
+
+  const nearby =
+    matchIndex >= 0
+      ? raw.slice(matchIndex + matchedText.length, matchIndex + matchedText.length + 240)
+      : raw.slice(0, 240);
+
+  const time = nearby.match(
+    /(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?\s*(?:–|-|—|to|à)\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/i
+  );
+
+  const [startHour, startMinute] = parseClock(
+    time?.[1],
+    time?.[2],
+    time?.[3]
+  );
+  const [endHour, endMinute] = parseClock(
+    time?.[4] || time?.[1],
+    time?.[5] || time?.[2],
+    time?.[6] || time?.[3]
+  );
+
+  const start = isoLocal(year, startMonth, startDay, startHour, startMinute);
+  const end = endDay
+    ? isoLocal(
+        endMonth === 1 && startMonth === 12 ? year + 1 : year,
+        endMonth || startMonth,
+        endDay,
+        endHour,
+        endMinute
+      )
+    : time
+      ? isoLocal(year, startMonth, startDay, endHour, endMinute)
+      : undefined;
+
+  const title = chooseTextTitle(raw, candidate.title);
+  const city = cityFromText(raw);
+
+  return [
+    {
+      id: `web-text-${rootHost(candidate.url)}-${normalize(title).replace(/\s+/g, "-").slice(0, 70)}-${start.slice(0, 10)}`,
+      title,
+      start,
+      end,
+      city,
+      category: categoryFromText(
+        [title, searchText, candidate.description].join(" ")
+      ),
+      source: sourceNameFromUrl(candidate.url),
+      sourceUrl: candidate.url,
+      official:
+        verification === "official" || verification === "institutional",
+      verification,
+      url: candidate.url,
+      entity: sourceNameFromUrl(candidate.url),
+      description: candidate.description || undefined,
+    },
+  ];
+}
+
+async function extractCandidateText(
+  candidates: SearchCandidate[],
+  searchText: string
+): Promise<AppEvent[]> {
+  if (!candidates.length) return [];
+
+  try {
+    const client = process.env.TAVILY_API_KEY
+      ? tavily({ apiKey: process.env.TAVILY_API_KEY })
+      : tavily();
+
+    const response = await client.extract(
+      candidates.slice(0, 6).map((candidate) => candidate.url)
+    );
+
+    const byUrl = new Map(
+      candidates.map((candidate) => [candidate.url, candidate])
+    );
+
+    return (response.results ?? []).flatMap((result) => {
+      const candidate =
+        byUrl.get(String(result.url)) ||
+        candidates.find(
+          (item) => rootHost(item.url) === rootHost(String(result.url))
+        );
+
+      if (!candidate) return [];
+
+      return parsePlainTextEvent(
+        String(result.rawContent ?? ""),
+        candidate,
+        searchText
+      );
+    });
+  } catch {
+    return [];
+  }
 }
 
 async function fetchEventPage(url: string, searchText: string) {
@@ -527,7 +771,20 @@ export async function fetchUniversalWebEvents(
     )
   );
 
-  return dedupe(batches.flat()).filter((event) =>
+  const structuredEvents = batches.flat();
+  const structuredUrls = new Set(
+    structuredEvents.map((event) => event.sourceUrl || event.url).filter(Boolean)
+  );
+  const missingCandidates = candidates.filter(
+    (candidate) => !structuredUrls.has(candidate.url)
+  );
+
+  const extractedEvents = await extractCandidateText(
+    missingCandidates,
+    intent.text
+  );
+
+  return dedupe([...structuredEvents, ...extractedEvents]).filter((event) =>
     eventMatchesDate(event, intent.targetDate, intent.timezone)
   );
 }
