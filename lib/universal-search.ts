@@ -1,3 +1,4 @@
+import { tavily } from "@tavily/core";
 import type {
   AppEvent,
   EventCategory,
@@ -5,7 +6,6 @@ import type {
   VerificationLevel,
 } from "./types";
 
-const TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 const REQUEST_TIMEOUT = 6500;
 
@@ -408,8 +408,9 @@ function dedupe(events: AppEvent[]) {
   });
 }
 
-async function tavilyCandidates(intent: SearchIntent): Promise<SearchCandidate[]> {
-  const apiKey = process.env.TAVILY_API_KEY;
+async function tavilyCandidates(
+  intent: SearchIntent
+): Promise<SearchCandidate[]> {
   if (!intent.text) return [];
 
   const query = [
@@ -422,40 +423,25 @@ async function tavilyCandidates(intent: SearchIntent): Promise<SearchCandidate[]
     .join(" ");
 
   try {
-    const response = await fetch(TAVILY_ENDPOINT, {
-      method: "POST",
-      headers: {
-        ...(apiKey
-          ? { Authorization: `Bearer ${apiKey}` }
-          : {
-              "X-Tavily-Access-Mode": "keyless",
-              "X-Client-Source": "tavily-js-keyless",
-            }),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query,
-        topic: "general",
-        search_depth: "basic",
-        max_results: 12,
-        include_answer: false,
-        include_raw_content: false,
-        include_images: false,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+    const client = process.env.TAVILY_API_KEY
+      ? tavily({ apiKey: process.env.TAVILY_API_KEY })
+      : tavily();
+
+    const response = await client.search(query, {
+      searchDepth: "basic",
+      maxResults: 12,
+      includeAnswer: false,
+      includeRawContent: false,
+      topic: "general",
     });
 
-    if (!response.ok) return [];
-    const payload = await response.json();
-
-    return (payload?.results ?? [])
-      .map((result: any) => ({
+    return (response.results ?? [])
+      .map((result): SearchCandidate => ({
         title: String(result.title ?? ""),
         description: String(result.content ?? ""),
         url: String(result.url ?? ""),
       }))
-      .filter((result: any) =>
+      .filter((result) =>
         likelyEventResult(result.title, result.description, result.url)
       )
       .slice(0, 8);
