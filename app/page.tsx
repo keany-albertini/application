@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Clock3,
   Compass,
-  Database,
   Heart,
   MapPin,
   Plus,
@@ -14,7 +13,6 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
-  Trophy,
   Wifi,
   X,
 } from "lucide-react";
@@ -43,18 +41,19 @@ type ApiResponse = {
   };
 };
 
+type LocalContext = {
+  city?: string;
+  region?: string;
+  country?: string;
+  timezone?: string;
+  postalCode?: string;
+  precise: boolean;
+  source: string;
+};
+
 type View = "calendar" | "explore" | "favorites";
 
-const QUICK_SEARCHES = [
-  "Marseille",
-  "Nike",
-  "Adidas",
-  "Ping-pong Marseille",
-  "Concert Lyon",
-  "Red Bull",
-  "Formula 1",
-  "NBA",
-];
+const LOCAL_CATEGORIES = ["Sport", "Concerts", "Culture", "Famille"];
 
 const CATEGORY_LABELS: Record<string, string> = {
   sport: "Sport",
@@ -77,6 +76,7 @@ function sameDay(a: Date, b: Date) {
 function formatEventDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Date à confirmer";
+
   return new Intl.DateTimeFormat("fr-FR", {
     weekday: "short",
     day: "numeric",
@@ -84,6 +84,14 @@ function formatEventDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatFullDay(value: Date) {
+  return new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(value);
 }
 
 function monthLabel(date: Date) {
@@ -103,9 +111,19 @@ function toDateParam(date: Date) {
 function isEventOnDay(event: AppEvent, day: Date) {
   const start = new Date(event.start);
   const end = event.end ? new Date(event.end) : start;
+
+  if (Number.isNaN(start.getTime())) return event.start.slice(0, 10) === toDateParam(day);
+
   const target = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
-  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
-  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+  const startDay = new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate()
+  ).getTime();
+  const endDay = Number.isNaN(end.getTime())
+    ? startDay
+    : new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+
   return target >= startDay && target <= endDay;
 }
 
@@ -137,10 +155,12 @@ export default function Home() {
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [mode, setMode] = useState<"live" | "demo">("demo");
   const [sourceCatalog, setSourceCatalog] = useState<SourceStatus[]>([]);
-  const [universalSearch, setUniversalSearch] = useState<ApiResponse["universalSearch"]>();
+  const [universalSearch, setUniversalSearch] =
+    useState<ApiResponse["universalSearch"]>();
+  const [localContext, setLocalContext] = useState<LocalContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(new Date());
-  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  const [selectedDay, setSelectedDay] = useState<Date>(new Date());
   const [favorites, setFavorites] = useState<string[]>([]);
   const [view, setView] = useState<View>("calendar");
   const [showPublish, setShowPublish] = useState(false);
@@ -153,33 +173,59 @@ export default function Home() {
         setFavorites(JSON.parse(saved));
       } catch {}
     }
-    void loadEvents("");
+
+    const today = new Date();
+    setMonth(today);
+    setSelectedDay(today);
+
+    void (async () => {
+      let context: LocalContext | null = null;
+
+      try {
+        const response = await fetch("/api/context", { cache: "no-store" });
+        if (response.ok) {
+          context = await response.json();
+          setLocalContext(context);
+        }
+      } catch {}
+
+      const localTerm = context?.city?.trim() ?? "";
+      await loadEvents(
+        localTerm,
+        today,
+        context?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
+      );
+    })();
   }, []);
 
-  async function loadEvents(term: string, targetDate?: Date | null) {
+  async function loadEvents(
+    term: string,
+    targetDate?: Date | null,
+    timezone?: string
+  ) {
     setLoading(true);
+
     try {
       const params = new URLSearchParams();
       if (term.trim()) params.set("q", term.trim());
       if (targetDate) params.set("date", toDateParam(targetDate));
       params.set(
         "tz",
-        Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Paris"
+        timezone ||
+          localContext?.timezone ||
+          Intl.DateTimeFormat().resolvedOptions().timeZone ||
+          "Europe/Paris"
       );
 
       const response = await fetch(`/api/events?${params.toString()}`, {
         cache: "no-store",
       });
       const payload: ApiResponse = await response.json();
+
       setEvents(payload.events ?? []);
       setMode(payload.mode ?? "demo");
       setSourceCatalog(payload.sourceCatalog ?? []);
       setUniversalSearch(payload.universalSearch);
-
-      if (!targetDate && payload.events?.[0]) {
-        const next = new Date(payload.events[0].start);
-        if (!Number.isNaN(next.getTime())) setMonth(next);
-      }
     } catch {
       setEvents([]);
       setMode("demo");
@@ -189,18 +235,26 @@ export default function Home() {
     }
   }
 
-  function submitSearch(event: FormEvent) {
-    event.preventDefault();
-    setSelectedDay(null);
-    setView("explore");
-    void loadEvents(query);
+  function currentSearchTerm() {
+    return query.trim() || localContext?.city?.trim() || "";
   }
 
-  function quickSearch(term: string) {
-    setQuery(term);
-    setSelectedDay(null);
+  function submitSearch(event: FormEvent) {
+    event.preventDefault();
+    const term = query.trim() || localContext?.city || "";
     setView("explore");
+    setSelectedDay(new Date());
+    setMonth(new Date());
     void loadEvents(term);
+  }
+
+  function localSearch(category?: string) {
+    const city = localContext?.city?.trim() || "";
+    const term = [category, city].filter(Boolean).join(" ").trim();
+
+    setQuery(category ? term : "");
+    setView("calendar");
+    void loadEvents(term || city, selectedDay);
   }
 
   function toggleFavorite(id: string) {
@@ -208,16 +262,27 @@ export default function Home() {
       const next = current.includes(id)
         ? current.filter((item) => item !== id)
         : [...current, id];
+
       localStorage.setItem("application:favorites", JSON.stringify(next));
       return next;
     });
   }
 
-  function resetDiscovery() {
-    setQuery("");
-    setSelectedDay(null);
+  function goToToday() {
+    const today = new Date();
+    setMonth(today);
+    setSelectedDay(today);
     setView("calendar");
-    void loadEvents("");
+    void loadEvents(currentSearchTerm(), today);
+  }
+
+  function resetDiscovery() {
+    const today = new Date();
+    setQuery("");
+    setMonth(today);
+    setSelectedDay(today);
+    setView("calendar");
+    void loadEvents(localContext?.city || "", today);
   }
 
   const calendarDays = useMemo(() => {
@@ -243,16 +308,12 @@ export default function Home() {
       current = current.filter((event) => favorites.includes(event.id));
     }
 
-    if (selectedDay) {
+    if (view !== "favorites") {
       current = current.filter((event) => isEventOnDay(event, selectedDay));
     }
 
     return current;
   }, [events, favorites, selectedDay, view]);
-
-  const nextEvent = visibleEvents[0];
-  const activeSources = sourceCatalog.filter((source) => source.active);
-  const officialCount = events.filter((event) => event.official).length;
 
   async function publish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -281,176 +342,54 @@ export default function Home() {
     event.currentTarget.reset();
   }
 
+  const placeLabel = localContext?.city
+    ? localContext.city
+    : localContext?.country
+      ? localContext.country
+      : "votre zone";
+
   return (
     <main className="app-shell">
-      <header className="hero">
-        <div className="brand-row">
-          <div className="brand-mark">
-            <CalendarDays size={18} />
-          </div>
-          <div className="brand-copy">
-            <strong>Application</strong>
-            <span>Tout ce qui arrive, au même endroit.</span>
-          </div>
-          <div className={`connection-badge ${universalSearch?.webDiscoveryConfigured ? "online" : ""}`}>
-            <span />
-            {universalSearch?.webDiscoveryConfigured ? "Internet actif" : "Connexion…"}
-          </div>
+      <header className="topbar">
+        <div className="brand-mark">
+          <CalendarDays size={18} />
         </div>
-
-        <div className="hero-title">
-          <p className="eyebrow">TON CALENDRIER GLOBAL</p>
-          <h1>Ne rate plus rien.</h1>
-          <p>
-            Matchs, événements de marques, concerts, festivals et rendez-vous
-            professionnels réunis dans un seul calendrier.
-          </p>
+        <div className="brand-copy">
+          <strong>Application</strong>
+          <span>Le calendrier de ce qui se passe autour de vous.</span>
         </div>
-
-        <form className="search-box" onSubmit={submitSearch}>
-          <Search size={20} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Nike Marseille demain, ping-pong Lyon…"
-            aria-label="Rechercher"
-          />
-          {query && (
-            <button
-              type="button"
-              className="clear-search"
-              onClick={() => setQuery("")}
-              aria-label="Effacer"
-            >
-              <X size={17} />
-            </button>
-          )}
-        </form>
-
-        <div className="quick-row">
-          {QUICK_SEARCHES.map((item) => (
-            <button
-              key={item}
-              className="chip"
-              type="button"
-              onClick={() => quickSearch(item)}
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-
-        <div className="internet-strip">
-          <span className="internet-icon"><Wifi size={15} /></span>
-          <div>
-            <strong>Recherche Internet</strong>
-            <span>
-              {universalSearch?.webDiscoveryConfigured
-                ? `Active · ${universalSearch.webProvider || "sources web"}`
-                : "Connexion aux sources en cours"}
-            </span>
-          </div>
-          <i className={universalSearch?.webDiscoveryConfigured ? "online" : ""} />
+        <div
+          className={`connection-badge ${
+            universalSearch?.webDiscoveryConfigured ? "online" : ""
+          }`}
+        >
+          <span />
+          {universalSearch?.webDiscoveryConfigured ? "En ligne" : "Connexion…"}
         </div>
       </header>
 
-      <section className="overview-grid">
-        <div className="overview-card">
-          <span className="overview-icon">
-            <Trophy size={18} />
-          </span>
+      <section className="calendar-hero">
+        <div className="calendar-heading">
           <div>
-            <strong>{events.length}</strong>
-            <span>événements trouvés</span>
-          </div>
-        </div>
-        <div className="overview-card">
-          <span className="overview-icon">
-            <ShieldCheck size={18} />
-          </span>
-          <div>
-            <strong>{officialCount}</strong>
-            <span>résultats officiels</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="sources-panel">
-        <div className="sources-head">
-          <div>
-            <p className="section-kicker">SOURCES</p>
-            <h2>Calendrier connecté</h2>
-          </div>
-          <span className="source-count">
-            <Database size={14} />
-            {universalSearch?.webDiscoveryConfigured
-              ? "Recherche universelle active"
-              : `${activeSources.length} sources actives`}
-          </span>
-        </div>
-        <div className="sources-scroll">
-          {sourceCatalog.slice(0, 14).map((source) => (
-            <a
-              key={source.id}
-              className={`source-chip ${source.active ? "active" : ""}`}
-              href={source.url}
-              target="_blank"
-              rel="noreferrer"
-              title={source.note}
-            >
-              {source.kind === "official" && <ShieldCheck size={12} />}
-              <span>{source.name}</span>
-              <i />
-            </a>
-          ))}
-        </div>
-      </section>
-
-      {nextEvent && view !== "favorites" && !selectedDay && (
-        <section
-          className="spotlight"
-          style={
-            nextEvent.image
-              ? {
-                  backgroundImage: `linear-gradient(90deg, rgba(8,9,13,.96), rgba(8,9,13,.58)), url("${nextEvent.image}")`,
-                }
-              : undefined
-          }
-        >
-          <div className="spotlight-top">
-            <p className="section-kicker">PROCHAIN ÉVÉNEMENT</p>
-            {nextEvent.official && (
-              <span className="official-badge">
-                <ShieldCheck size={12} />
-                Officiel
-              </span>
-            )}
-          </div>
-          <h2>{nextEvent.title}</h2>
-          <div className="spotlight-info">
-            <span>
-              <Clock3 size={15} />
-              {formatEventDate(nextEvent.start)}
+            <p className="section-kicker">AUJOURD’HUI</p>
+            <h1>{formatFullDay(new Date())}</h1>
+            <span className="local-line">
+              <MapPin size={14} />
+              {localContext?.city
+                ? `Événements près de ${localContext.city}`
+                : "Recherche locale automatique"}
             </span>
-            {(nextEvent.venue || nextEvent.city) && (
-              <span>
-                <MapPin size={15} />
-                {[nextEvent.venue, nextEvent.city].filter(Boolean).join(" · ")}
-              </span>
-            )}
-            <span className="spotlight-source">{nextEvent.source}</span>
           </div>
-        </section>
-      )}
 
-      <section className="section-row">
-        <div>
-          <p className="section-kicker">CALENDRIER</p>
-          <h2>{monthLabel(month)}</h2>
+          <button className="today-main-button" type="button" onClick={goToToday}>
+            Aujourd’hui
+          </button>
         </div>
-        <div className="month-actions">
+
+        <div className="calendar-toolbar">
           <button
             className="mini-button"
+            type="button"
             onClick={() =>
               setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))
             }
@@ -458,15 +397,12 @@ export default function Home() {
           >
             <ChevronLeft size={18} />
           </button>
+
+          <strong>{monthLabel(month)}</strong>
+
           <button
             className="mini-button"
-            onClick={() => setMonth(new Date())}
-            aria-label="Aujourd’hui"
-          >
-            <span className="today-label">Aujourd’hui</span>
-          </button>
-          <button
-            className="mini-button"
+            type="button"
             onClick={() =>
               setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))
             }
@@ -475,77 +411,115 @@ export default function Home() {
             <ChevronRight size={18} />
           </button>
         </div>
+
+        <div className="calendar-card calendar-card-main">
+          <div className="weekdays">
+            {["L", "M", "M", "J", "V", "S", "D"].map((day, index) => (
+              <span key={`${day}-${index}`}>{day}</span>
+            ))}
+          </div>
+
+          <div className="calendar-grid">
+            {calendarDays.map((day, index) => {
+              if (!day) {
+                return <span className="day empty" key={`e-${index}`} />;
+              }
+
+              const dayEvents = events.filter((event) => isEventOnDay(event, day));
+              const active = sameDay(selectedDay, day);
+              const today = sameDay(new Date(), day);
+
+              return (
+                <button
+                  key={day.toISOString()}
+                  className={`day ${active ? "active" : ""} ${
+                    today ? "today" : ""
+                  }`}
+                  onClick={() => {
+                    setSelectedDay(day);
+                    setView("calendar");
+                    void loadEvents(currentSearchTerm(), day);
+                  }}
+                >
+                  <span>{day.getDate()}</span>
+                  {dayEvents.length > 0 && (
+                    <span className="event-dots">
+                      {dayEvents.slice(0, 3).map((event) => (
+                        <i key={event.id} />
+                      ))}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </section>
 
-      <section className="calendar-card">
-        <div className="weekdays">
-          {["L", "M", "M", "J", "V", "S", "D"].map((day, index) => (
-            <span key={`${day}-${index}`}>{day}</span>
+      <section className="local-discovery">
+        <div className="local-discovery-head">
+          <div>
+            <p className="section-kicker">PRÈS DE VOUS</p>
+            <h2>{placeLabel}</h2>
+          </div>
+          <span className="internet-live">
+            <Wifi size={13} />
+            Internet
+          </span>
+        </div>
+
+        <div className="local-chips">
+          <button type="button" onClick={() => localSearch()}>
+            Tout
+          </button>
+          {LOCAL_CATEGORIES.map((category) => (
+            <button
+              key={category}
+              type="button"
+              onClick={() => localSearch(category)}
+            >
+              {category}
+            </button>
           ))}
         </div>
-
-        <div className="calendar-grid">
-          {calendarDays.map((day, index) => {
-            if (!day) return <span className="day empty" key={`e-${index}`} />;
-
-            const dayEvents = events.filter((event) =>
-              isEventOnDay(event, day)
-            );
-            const active = selectedDay ? sameDay(selectedDay, day) : false;
-            const today = sameDay(new Date(), day);
-
-            return (
-              <button
-                key={day.toISOString()}
-                className={`day ${active ? "active" : ""} ${today ? "today" : ""}`}
-                onClick={() => {
-                  if (active) {
-                    setSelectedDay(null);
-                    void loadEvents(query);
-                  } else {
-                    setSelectedDay(day);
-                    setView("explore");
-                    void loadEvents(query, day);
-                  }
-                }}
-              >
-                <span>{day.getDate()}</span>
-                {dayEvents.length > 0 && (
-                  <span className="event-dots">
-                    {dayEvents.slice(0, 3).map((event) => (
-                      <i key={event.id} />
-                    ))}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
       </section>
+
+      <form className="search-box search-box-secondary" onSubmit={submitSearch}>
+        <Search size={20} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Nike Marseille demain, ping-pong Lyon…"
+          aria-label="Rechercher partout"
+        />
+        {query && (
+          <button
+            type="button"
+            className="clear-search"
+            onClick={() => setQuery("")}
+            aria-label="Effacer"
+          >
+            <X size={17} />
+          </button>
+        )}
+      </form>
 
       <section className="feed">
         <div className="feed-head">
           <div>
             <p className="section-kicker">
-              {view === "favorites" ? "TES FAVORIS" : "À VENIR"}
+              {view === "favorites" ? "TES FAVORIS" : "PROGRAMME"}
             </p>
             <h2>
               {view === "favorites"
                 ? "Événements enregistrés"
-                : selectedDay
-                  ? new Intl.DateTimeFormat("fr-FR", {
-                      day: "numeric",
-                      month: "long",
-                    }).format(selectedDay)
-                  : query
-                    ? `Résultats pour “${query}”`
-                    : "À découvrir"}
+                : `${formatFullDay(selectedDay)} · ${placeLabel}`}
             </h2>
           </div>
 
-          {(selectedDay || query || view === "favorites") && (
+          {(query || view === "favorites") && (
             <button className="text-button" onClick={resetDiscovery}>
-              Réinitialiser
+              Accueil
             </button>
           )}
         </div>
@@ -553,7 +527,7 @@ export default function Home() {
         {loading ? (
           <div className="loading-card">
             <Sparkles size={22} />
-            Mise à jour depuis les sources…
+            Recherche des événements en ligne…
           </div>
         ) : visibleEvents.length === 0 ? (
           <div className="empty-card">
@@ -561,14 +535,12 @@ export default function Home() {
             <strong>
               {view === "favorites"
                 ? "Aucun favori pour l’instant"
-                : "Aucun événement trouvé"}
+                : "Aucun événement fiable trouvé"}
             </strong>
             <span>
               {view === "favorites"
                 ? "Ajoute un cœur à un événement pour le retrouver ici."
-                : universalSearch?.webDiscoveryConfigured
-                  ? "Aucun résultat fiable trouvé pour cette recherche et cette date."
-                  : "La recherche Internet n’est pas disponible pour le moment."}
+                : `Rien de suffisamment fiable trouvé pour ${placeLabel} à cette date.`}
             </span>
           </div>
         ) : (
@@ -579,17 +551,24 @@ export default function Home() {
               return (
                 <article className="event-card" key={event.id}>
                   <div className={`category-mark category-${event.category}`} />
+
                   <div className="event-content">
                     <div className="event-meta-top">
                       <span className="category-pill">
                         {CATEGORY_LABELS[event.category] ?? "Événement"}
                       </span>
+
                       {verificationLabel(event) && (
-                        <span className={`official-badge compact verification-${event.verification || "official"}`}>
+                        <span
+                          className={`official-badge compact verification-${
+                            event.verification || "official"
+                          }`}
+                        >
                           <ShieldCheck size={10} />
                           {verificationLabel(event)}
                         </span>
                       )}
+
                       <span className="source">{event.source}</span>
                     </div>
 
@@ -609,7 +588,9 @@ export default function Home() {
                       )}
                     </div>
 
-                    {event.description && <p>{compactDescription(event.description)}</p>}
+                    {event.description && (
+                      <p>{compactDescription(event.description)}</p>
+                    )}
 
                     {(event.url || event.sourceUrl) && (
                       <a
@@ -627,13 +608,24 @@ export default function Home() {
                     onClick={() => toggleFavorite(event.id)}
                     aria-label="Ajouter aux favoris"
                   >
-                    <Heart size={20} fill={isFavorite ? "currentColor" : "none"} />
+                    <Heart
+                      size={20}
+                      fill={isFavorite ? "currentColor" : "none"}
+                    />
                   </button>
                 </article>
               );
             })}
           </div>
         )}
+      </section>
+
+      <section className="source-summary">
+        <ShieldCheck size={15} />
+        <span>
+          {sourceCatalog.filter((source) => source.active).length} sources actives
+          · résultats classés par fiabilité
+        </span>
       </section>
 
       <button className="floating-publish" onClick={() => setShowPublish(true)}>
@@ -646,7 +638,7 @@ export default function Home() {
           className={`nav-item ${view === "calendar" ? "active" : ""}`}
           onClick={() => {
             setView("calendar");
-            setSelectedDay(null);
+            goToToday();
           }}
         >
           <CalendarDays size={20} />
@@ -657,7 +649,9 @@ export default function Home() {
           className={`nav-item ${view === "explore" ? "active" : ""}`}
           onClick={() => {
             setView("explore");
-            document.querySelector<HTMLInputElement>(".search-box input")?.focus();
+            document
+              .querySelector<HTMLInputElement>(".search-box input")
+              ?.focus();
           }}
         >
           <Compass size={20} />
@@ -666,10 +660,7 @@ export default function Home() {
 
         <button
           className={`nav-item ${view === "favorites" ? "active" : ""}`}
-          onClick={() => {
-            setView("favorites");
-            setSelectedDay(null);
-          }}
+          onClick={() => setView("favorites")}
         >
           <Star size={20} />
           <span>Favoris</span>
