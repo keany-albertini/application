@@ -617,19 +617,23 @@ export async function fetchParisOpenData(query: string): Promise<AppEvent[]> {
   }
 }
 
-export async function fetchOpenAgenda(query: string): Promise<AppEvent[]> {
+export async function fetchOpenAgenda(
+  query: string,
+  targetDate?: string
+): Promise<AppEvent[]> {
   const key = process.env.OPENAGENDA_API_KEY;
   if (!key) return [];
 
   try {
-    const params = new URLSearchParams({
-      size: "80",
+    const agendaParams = new URLSearchParams({
+      size: "8",
+      official: "1",
+      sort: "recentlyAddedEvents.desc",
     });
-    params.append("relative[]", "current");
-    params.append("relative[]", "upcoming");
+    if (query) agendaParams.set("search", query);
 
-    const response = await fetch(
-      `https://api.openagenda.com/v2/events?${params.toString()}`,
+    const agendaResponse = await fetch(
+      `https://api.openagenda.com/v2/agendas?${agendaParams.toString()}`,
       {
         headers: { key },
         cache: "no-store",
@@ -637,56 +641,112 @@ export async function fetchOpenAgenda(query: string): Promise<AppEvent[]> {
       }
     );
 
-    if (!response.ok) return [];
-    const payload = await response.json();
-    const rows = payload?.events ?? [];
+    if (!agendaResponse.ok) return [];
+    const agendaPayload = await agendaResponse.json();
+    const agendas = agendaPayload?.agendas ?? [];
 
-    return rows
-      .map((row: any): AppEvent | null => {
-        const firstTiming = row?.timings?.[0];
-        const title =
-          typeof row.title === "string"
-            ? row.title
-            : row.title?.fr || row.title?.en;
+    const batches = await Promise.all(
+      agendas.slice(0, 8).map(async (agenda: any) => {
+        const params = new URLSearchParams({
+          size: "50",
+          sort: "timings.asc",
+        });
 
-        if (!title || !firstTiming?.begin) return null;
+        params.append("relative[]", "current");
+        params.append("relative[]", "upcoming");
 
-        return {
-          id: `openagenda-${row.uid}`,
-          title,
-          start: firstTiming.begin,
-          end: firstTiming.end,
-          venue: row.location?.name,
-          city: row.location?.city,
-          country: row.location?.countryCode || "France",
-          category: "culture",
-          source: "OpenAgenda",
-          sourceUrl: "https://openagenda.com",
-          official: Boolean(row?.agenda?.official),
-          url: row.canonicalUrl || row.registrationUrl,
-          image: row.image?.base,
-          entity: row?.agenda?.title,
-          description:
-            typeof row.description === "string"
-              ? row.description
-              : row.description?.fr || row.description?.en,
-        };
+        if (query) {
+          params.set("search", query);
+          params.set("threshold", "auto");
+        }
+
+        if (targetDate) {
+          params.set("timings[gte]", `${targetDate}T00:00:00.000Z`);
+          params.set("timings[lte]", `${targetDate}T23:59:59.999Z`);
+        }
+
+        const response = await fetch(
+          `https://api.openagenda.com/v2/agendas/${agenda.uid}/events?${params.toString()}`,
+          {
+            headers: { key },
+            cache: "no-store",
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+          }
+        );
+
+        if (!response.ok) return [];
+        const payload = await response.json();
+        const rows = payload?.events ?? [];
+
+        return rows
+          .map((row: any): AppEvent | null => {
+            const timing =
+              row?.nextTiming ||
+              row?.timings?.find((item: any) => item?.begin) ||
+              row?.timings?.[0];
+
+            const title =
+              typeof row.title === "string"
+                ? row.title
+                : row.title?.fr || row.title?.en;
+
+            const begin =
+              typeof timing === "string"
+                ? timing
+                : timing?.begin || row.firstTiming;
+
+            if (!title || !begin) return null;
+
+            const description =
+              typeof row.description === "string"
+                ? row.description
+                : row.description?.fr || row.description?.en;
+
+            return {
+              id: `openagenda-${agenda.uid}-${row.uid}`,
+              title,
+              start: begin,
+              end:
+                typeof timing === "object"
+                  ? timing?.end
+                  : row.lastTiming || undefined,
+              venue: row.location?.name,
+              city:
+                row.location?.city ||
+                row.location?.adminLevel4 ||
+                row.location?.addressCity,
+              country:
+                row.location?.countryCode ||
+                row.location?.country ||
+                "France",
+              category: "culture",
+              source: agenda.title || "OpenAgenda",
+              sourceUrl: `https://openagenda.com/${agenda.slug || ""}`,
+              official: Boolean(agenda.official),
+              verification: agenda.official ? "institutional" : "verified-web",
+              url:
+                row.canonicalUrl ||
+                row.registrationUrl ||
+                `https://openagenda.com/${agenda.slug || ""}/events/${row.slug || row.uid}`,
+              image: row.image?.base || row.image?.filename,
+              entity: agenda.title,
+              description,
+            };
+          })
+          .filter((event: AppEvent | null): event is AppEvent => Boolean(event));
       })
-      .filter((event: AppEvent | null): event is AppEvent => Boolean(event))
-      .filter((event: AppEvent) => {
-        if (!query) return true;
-        return normalize(
-          [event.title, event.venue, event.city, event.description]
-            .filter(Boolean)
-            .join(" ")
-        ).includes(normalize(query));
-      }) as AppEvent[];
+    );
+
+    return batches.flat();
   } catch {
     return [];
   }
 }
 
-export async function fetchDataTourisme(query: string): Promise<AppEvent[]> {
+export async function fetchDataTourisme(
+  query: string,
+  targetDate?: string
+): Promise<AppEvent[]> {
   const apiKey = process.env.DATATOURISME_API_KEY;
   if (!apiKey) return [];
 
@@ -696,10 +756,11 @@ export async function fetchDataTourisme(query: string): Promise<AppEvent[]> {
       lang: "fr",
       sort: "lastUpdate[desc]",
     });
+
     if (query) params.set("search", query);
 
     const response = await fetch(
-      `https://api.datatourisme.fr/v1/entertainmentAndEvent?${params.toString()}`,
+      `https://api.datatourisme.fr/v1/catalog?${params.toString()}`,
       {
         headers: { "X-API-Key": apiKey },
         cache: "no-store",
@@ -709,8 +770,14 @@ export async function fetchDataTourisme(query: string): Promise<AppEvent[]> {
 
     if (!response.ok) return [];
     const payload = await response.json();
+    const rows =
+      payload?.items ||
+      payload?.objects ||
+      payload?.data ||
+      payload?.results ||
+      [];
 
-    return (payload?.objects ?? [])
+    return rows
       .map((row: any): AppEvent | null => {
         const title =
           row.name?.fr ||
@@ -718,32 +785,51 @@ export async function fetchDataTourisme(query: string): Promise<AppEvent[]> {
           row.name ||
           row.label?.fr ||
           row.label;
-        const period =
-          row.periods?.[0] ||
-          row.openingDetails?.periods?.[0] ||
-          row.openingPeriods?.[0];
-        const start =
+
+        const periods =
+          row.periods ||
+          row.openingDetails?.periods ||
+          row.openingPeriods ||
+          row.temporalCoverage ||
+          [];
+        const period = Array.isArray(periods) ? periods[0] : periods;
+
+        const startDate =
           row.startDate ||
           period?.startDate ||
           period?.start ||
           row.temporalCoverage?.startDate;
-        const end =
+        const endDate =
           row.endDate ||
           period?.endDate ||
           period?.end ||
           row.temporalCoverage?.endDate;
 
-        if (!title || !start) return null;
+        if (!title || !startDate) return null;
+
+        const start =
+          String(startDate).length === 10
+            ? `${startDate}T12:00:00`
+            : String(startDate);
+
+        if (targetDate && start.slice(0, 10) !== targetDate) {
+          const end = endDate ? String(endDate).slice(0, 10) : undefined;
+          if (!end || targetDate < start.slice(0, 10) || targetDate > end) {
+            return null;
+          }
+        }
 
         const city =
           row.address?.city ||
           row.location?.address?.city ||
+          row.location?.address?.addressLocality ||
           row.city ||
           row.inseePlace?.label?.fr;
         const venue =
           row.location?.name?.fr ||
           row.location?.name ||
-          row.place?.name?.fr;
+          row.place?.name?.fr ||
+          row.place?.name;
         const url =
           row.contact?.website ||
           row.website ||
@@ -753,8 +839,8 @@ export async function fetchDataTourisme(query: string): Promise<AppEvent[]> {
         return {
           id: `datatourisme-${row.uuid || row.id || row["@id"] || resultsSafeId(title, start)}`,
           title: String(title),
-          start: String(start).length === 10 ? `${start}T12:00:00` : String(start),
-          end: end ? String(end) : undefined,
+          start,
+          end: endDate ? String(endDate) : undefined,
           venue: venue ? String(venue) : undefined,
           city: city ? String(city) : undefined,
           country: "France",
@@ -762,6 +848,7 @@ export async function fetchDataTourisme(query: string): Promise<AppEvent[]> {
           source: "DATAtourisme",
           sourceUrl: "https://www.datatourisme.fr/",
           official: true,
+          verification: "institutional",
           url: url ? String(url) : "https://explore.datatourisme.fr",
           entity: "DATAtourisme",
           description:
@@ -826,6 +913,16 @@ export function getSourceCatalog(active: Record<string, boolean>): SourceStatus[
       note: process.env.DATATOURISME_API_KEY
         ? "API nationale open data connectée"
         : "Clé API gratuite disponible sur demande",
+    },
+    {
+      id: "brave-search",
+      name: "Recherche web universelle",
+      kind: "web-search",
+      active: Boolean(active["brave-search"]),
+      url: "https://brave.com/search/api/",
+      note: process.env.BRAVE_SEARCH_API_KEY
+        ? "Recherche web structurée connectée"
+        : "Clé Brave Search à ajouter pour les marques et sujets universels",
     },
   ];
 }
