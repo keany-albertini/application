@@ -15,6 +15,7 @@ import {
   Sparkles,
   Star,
   Trophy,
+  Wifi,
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -35,6 +36,8 @@ type ApiResponse = {
   universalSearch?: {
     enabled: boolean;
     webDiscoveryConfigured: boolean;
+    webProvider?: string | null;
+    webDiscoveryMode?: string;
     openAgendaConfigured: boolean;
     dataTourismeConfigured: boolean;
   };
@@ -95,6 +98,21 @@ function toDateParam(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function isEventOnDay(event: AppEvent, day: Date) {
+  const start = new Date(event.start);
+  const end = event.end ? new Date(event.end) : start;
+  const target = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+  return target >= startDay && target <= endDay;
+}
+
+function compactDescription(value?: string) {
+  if (!value) return "";
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned.length > 220 ? `${cleaned.slice(0, 217)}…` : cleaned;
 }
 
 function verificationLabel(event: AppEvent) {
@@ -226,9 +244,7 @@ export default function Home() {
     }
 
     if (selectedDay) {
-      current = current.filter((event) =>
-        sameDay(new Date(event.start), selectedDay)
-      );
+      current = current.filter((event) => isEventOnDay(event, selectedDay));
     }
 
     return current;
@@ -276,9 +292,9 @@ export default function Home() {
             <strong>Application</strong>
             <span>Tout ce qui arrive, au même endroit.</span>
           </div>
-          <div className={`connection-badge ${mode === "live" ? "online" : ""}`}>
+          <div className={`connection-badge ${universalSearch?.webDiscoveryConfigured ? "online" : ""}`}>
             <span />
-            {mode === "live" ? "À jour" : "Démo"}
+            {universalSearch?.webDiscoveryConfigured ? "Internet actif" : "Connexion…"}
           </div>
         </div>
 
@@ -323,6 +339,19 @@ export default function Home() {
             </button>
           ))}
         </div>
+
+        <div className="internet-strip">
+          <span className="internet-icon"><Wifi size={15} /></span>
+          <div>
+            <strong>Recherche Internet</strong>
+            <span>
+              {universalSearch?.webDiscoveryConfigured
+                ? `Active · ${universalSearch.webProvider || "sources web"}`
+                : "Connexion aux sources en cours"}
+            </span>
+          </div>
+          <i className={universalSearch?.webDiscoveryConfigured ? "online" : ""} />
+        </div>
       </header>
 
       <section className="overview-grid">
@@ -341,7 +370,7 @@ export default function Home() {
           </span>
           <div>
             <strong>{officialCount}</strong>
-            <span>sources officielles</span>
+            <span>résultats officiels</span>
           </div>
         </div>
       </section>
@@ -460,7 +489,7 @@ export default function Home() {
             if (!day) return <span className="day empty" key={`e-${index}`} />;
 
             const dayEvents = events.filter((event) =>
-              sameDay(new Date(event.start), day)
+              isEventOnDay(event, day)
             );
             const active = selectedDay ? sameDay(selectedDay, day) : false;
             const today = sameDay(new Date(), day);
@@ -537,7 +566,9 @@ export default function Home() {
             <span>
               {view === "favorites"
                 ? "Ajoute un cœur à un événement pour le retrouver ici."
-                : "Essaie une autre recherche."}
+                : universalSearch?.webDiscoveryConfigured
+                  ? "Aucun résultat fiable trouvé pour cette recherche et cette date."
+                  : "La recherche Internet n’est pas disponible pour le moment."}
             </span>
           </div>
         ) : (
@@ -578,7 +609,7 @@ export default function Home() {
                       )}
                     </div>
 
-                    {event.description && <p>{event.description}</p>}
+                    {event.description && <p>{compactDescription(event.description)}</p>}
 
                     {(event.url || event.sourceUrl) && (
                       <a
