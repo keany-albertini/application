@@ -34,6 +34,10 @@ const QUICK_SEARCHES = [
   "PSG",
   "Formula 1",
   "Red Bull",
+  "NBA",
+  "NHL",
+  "UFC",
+  "Formula E",
   "Barcelona",
   "Concert Paris",
 ];
