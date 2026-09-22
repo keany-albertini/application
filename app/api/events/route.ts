@@ -4,7 +4,7 @@ import {
   fetchOfficialWebEvents,
   fetchOpenAgenda,
   fetchParisOpenData,
-  fetchSongkick,
+  fetchDataTourisme,
   getSourceCatalog,
 } from "@/lib/sources";
 import type { AppEvent } from "@/lib/types";
@@ -146,8 +146,38 @@ async function nextEventsForTeam(team: CuratedTeam): Promise<AppEvent[]> {
   }
 }
 
+async function searchSportsDbTeams(query: string): Promise<CuratedTeam[]> {
+  if (!query) return [];
+
+  try {
+    const response = await fetch(
+      `https://www.thesportsdb.com/api/v1/json/${SPORTS_API_KEY}/searchteams.php?t=${encodeURIComponent(query)}`,
+      {
+        cache: "no-store",
+        signal: AbortSignal.timeout(6500),
+      }
+    );
+
+    if (!response.ok) return [];
+    const payload = await response.json();
+
+    return (payload?.teams ?? []).slice(0, 3).map((team: any) => ({
+      idTeam: String(team.idTeam),
+      strTeam: String(team.strTeam),
+      aliases: [String(team.strTeam)],
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function fetchSportsDb(query: string): Promise<AppEvent[]> {
-  const teams = findCuratedTeams(query);
+  let teams = findCuratedTeams(query);
+
+  if (!teams.length && query) {
+    teams = await searchSportsDbTeams(query);
+  }
+
   if (!teams.length) return [];
 
   const batches = await Promise.all(teams.map(nextEventsForTeam));
@@ -243,23 +273,27 @@ function sourceActivation(events: AppEvent[]) {
     liverpool: names.has("liverpool fc"),
     uefa: names.has("uefa"),
     ligue1: names.has("ligue 1"),
+    formulae: names.has("formula e"),
+    nba: names.has("nba"),
+    nhl: names.has("nhl"),
+    ufc: names.has("ufc"),
     "paris-open-data": names.has("ville de paris open data"),
     thesportsdb: names.has("thesportsdb"),
     openagenda: names.has("openagenda"),
-    songkick: names.has("songkick"),
+    datatourisme: names.has("datatourisme"),
   };
 }
 
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get("q")?.trim() ?? "";
 
-  const [official, sports, paris, openAgenda, songkick, professional] =
+  const [official, sports, paris, openAgenda, dataTourisme, professional] =
     await Promise.all([
       fetchOfficialWebEvents(query),
       fetchSportsDb(query),
       fetchParisOpenData(query),
       fetchOpenAgenda(query),
-      fetchSongkick(query),
+      fetchDataTourisme(query),
       fetchProfessionalEvents(query),
     ]);
 
@@ -269,7 +303,7 @@ export async function GET(request: NextRequest) {
       ...professional,
       ...paris,
       ...openAgenda,
-      ...songkick,
+      ...dataTourisme,
       ...sports,
     ])
   ).sort(
@@ -293,8 +327,7 @@ export async function GET(request: NextRequest) {
     coverage: {
       official: official.length,
       professional: professional.length,
-      openData: paris.length + openAgenda.length,
-      music: songkick.length,
+      openData: paris.length + openAgenda.length + dataTourisme.length,
       sportsBackup: sports.length,
     },
   });
