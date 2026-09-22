@@ -410,7 +410,7 @@ function dedupe(events: AppEvent[]) {
 
 async function tavilyCandidates(intent: SearchIntent): Promise<SearchCandidate[]> {
   const apiKey = process.env.TAVILY_API_KEY;
-  if (!apiKey || !intent.text) return [];
+  if (!intent.text) return [];
 
   const query = [
     intent.text,
@@ -425,7 +425,12 @@ async function tavilyCandidates(intent: SearchIntent): Promise<SearchCandidate[]
     const response = await fetch(TAVILY_ENDPOINT, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        ...(apiKey
+          ? { Authorization: `Bearer ${apiKey}` }
+          : {
+              "X-Tavily-Access-Mode": "keyless",
+              "X-Client-Source": "ApplicationCalendar",
+            }),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -507,7 +512,7 @@ async function braveCandidates(intent: SearchIntent): Promise<SearchCandidate[]>
 export function universalWebProvider() {
   if (process.env.TAVILY_API_KEY) return "Tavily";
   if (process.env.BRAVE_SEARCH_API_KEY) return "Brave Search";
-  return null;
+  return "Tavily keyless";
 }
 
 export async function fetchUniversalWebEvents(
@@ -515,9 +520,11 @@ export async function fetchUniversalWebEvents(
 ): Promise<AppEvent[]> {
   if (!intent.text) return [];
 
-  const candidates = process.env.TAVILY_API_KEY
-    ? await tavilyCandidates(intent)
-    : await braveCandidates(intent);
+  let candidates = await tavilyCandidates(intent);
+
+  if (!candidates.length && process.env.BRAVE_SEARCH_API_KEY) {
+    candidates = await braveCandidates(intent);
+  }
 
   if (!candidates.length) return [];
 
