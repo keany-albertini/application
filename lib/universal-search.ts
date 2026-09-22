@@ -9,6 +9,37 @@ import type {
 const BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 const REQUEST_TIMEOUT = 6500;
 
+const BRAND_DOMAINS: Array<[string, string]> = [
+  ["nike", "nike.com"],
+  ["adidas", "adidas.com"],
+  ["puma", "puma.com"],
+  ["red bull", "redbull.com"],
+  ["apple", "apple.com"],
+  ["samsung", "samsung.com"],
+  ["sony", "sony.com"],
+  ["playstation", "playstation.com"],
+  ["xbox", "xbox.com"],
+  ["microsoft", "microsoft.com"],
+  ["nintendo", "nintendo.com"],
+  ["lego", "lego.com"],
+  ["ikea", "ikea.com"],
+  ["decathlon", "decathlon.com"],
+  ["under armour", "underarmour.com"],
+  ["new balance", "newbalance.com"],
+  ["asics", "asics.com"],
+  ["reebok", "reebok.com"],
+  ["coca cola", "coca-cola.com"],
+  ["pepsi", "pepsi.com"],
+];
+
+function preferredOfficialDomains(searchText: string) {
+  const query = normalize(searchText);
+  return BRAND_DOMAINS
+    .filter(([brand]) => query.includes(normalize(brand)))
+    .map(([, domain]) => domain)
+    .slice(0, 3);
+}
+
 const TRUSTED_OFFICIAL_HOSTS = new Set([
   "redbull.com",
   "formula1.com",
@@ -475,6 +506,19 @@ function parsePlainTextEvent(
 ): AppEvent[] {
   if (!raw || raw.length < 30) return [];
 
+  const candidateLabel = normalize(candidate.title);
+  const dateMentions =
+    raw.match(
+      /(?:January|February|March|April|May|June|July|August|September|October|November|December|janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+\d{1,2}|\d{1,2}\s+(?:janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)/gi
+    ) ?? [];
+
+  if (
+    dateMentions.length > 4 &&
+    /\b(calendar|calendrier|schedule|agenda|fixtures?)\b/.test(candidateLabel)
+  ) {
+    return [];
+  }
+
   const verification = verificationForUrl(candidate.url, searchText);
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -678,23 +722,43 @@ async function tavilyCandidates(
       ? tavily({ apiKey: process.env.TAVILY_API_KEY })
       : tavily();
 
-    const response = await client.search(query, {
-      searchDepth: "basic",
-      maxResults: 12,
-      includeAnswer: false,
-      includeRawContent: false,
-      topic: "general",
-    });
+    const officialDomains = preferredOfficialDomains(intent.text);
 
-    return (response.results ?? [])
-      .map((result): SearchCandidate => ({
-        title: String(result.title ?? ""),
-        description: String(result.content ?? ""),
-        url: String(result.url ?? ""),
-      }))
-      .filter((result) =>
-        likelyEventResult(result.title, result.description, result.url)
-      )
+    const search = async (includeDomains?: string[]) => {
+      const response = await client.search(query, {
+        searchDepth: "basic",
+        maxResults: includeDomains?.length ? 8 : 12,
+        includeAnswer: false,
+        includeRawContent: false,
+        topic: "general",
+        ...(includeDomains?.length ? { includeDomains } : {}),
+      });
+
+      return (response.results ?? [])
+        .map((result): SearchCandidate => ({
+          title: String(result.title ?? ""),
+          description: String(result.content ?? ""),
+          url: String(result.url ?? ""),
+        }))
+        .filter((result) =>
+          likelyEventResult(result.title, result.description, result.url)
+        );
+    };
+
+    const official = officialDomains.length
+      ? await search(officialDomains)
+      : [];
+
+    if (official.length >= 3) return official.slice(0, 8);
+
+    const general = await search();
+    const seen = new Set<string>();
+    return [...official, ...general]
+      .filter((result) => {
+        if (!result.url || seen.has(result.url)) return false;
+        seen.add(result.url);
+        return true;
+      })
       .slice(0, 8);
   } catch {
     return [];
