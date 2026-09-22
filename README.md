@@ -1,36 +1,46 @@
 # Application
 
-Application mobile/PWA de calendrier global : sport, musique, marques, culture, gaming, salons professionnels et événements publiés directement par des organisateurs.
+Application mobile/PWA de calendrier global : sport, marques, musique, culture, gaming, salons professionnels et événements publiés par des organisateurs.
 
-## V0.1
+## V0.2
 
-- Recherche globale (ex. Olympique de Marseille, Red Bull, concerts)
-- Calendrier mensuel
-- Flux d'événements
-- Favoris stockés sur le téléphone
-- Interface mobile installable en PWA
-- Agrégation de plusieurs sources avec déduplication
-- Connecteur Ticketmaster
-- Connecteur TheSportsDB
-- Espace de publication pour les professionnels
-- Backend professionnel prêt pour Supabase
+- Ticketmaster supprimé du projet.
+- TheSportsDB utilisé pour les données sportives.
+- Clé gratuite TheSportsDB `123` intégrée automatiquement.
+- OM, PSG, Real Madrid, Barcelona, Manchester City, Liverpool et Arsenal reliés directement à leurs IDs TheSportsDB.
+- Recherche avec alias : `OM`, `PSG`, `Barça`, `Man City`, etc.
+- Calendrier mensuel interactif.
+- Carte du prochain événement.
+- Vue Explorer.
+- Vue Favoris corrigée : elle n'efface plus le flux principal.
+- Favoris conservés localement sur le téléphone.
+- Interface mobile/PWA améliorée.
+- Publication d'événements professionnels prête à être reliée à Supabase.
 
-Sans clés API, l'interface fonctionne en **mode démo**. Dès que les variables d'environnement sont renseignées, l'API bascule automatiquement vers les données Internet disponibles.
+## Données sportives gratuites
 
-## Variables d'environnement
-
-Créer les variables suivantes dans Vercel :
+Aucune variable d'environnement n'est obligatoire pour démarrer le sport :
 
 ```bash
-TICKETMASTER_API_KEY=
-THESPORTSDB_API_KEY=
+THESPORTSDB_API_KEY=123
+```
+
+Cette valeur est déjà utilisée automatiquement dans le code si aucune clé n'est configurée.
+
+La clé gratuite TheSportsDB a des limites : certains endpoints renvoient moins de résultats que la version Premium. L'architecture est donc conçue pour que nous puissions compléter progressivement les sources sans changer l'interface de l'application.
+
+## Supabase — événements professionnels
+
+Quand nous connecterons Supabase, ajouter dans Vercel :
+
+```bash
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
-Les clés restent côté serveur : elles ne sont pas exposées au navigateur.
+La clé serveur ne doit jamais être placée dans le code public du dépôt.
 
-## Table Supabase pour les événements professionnels
+### Table
 
 ```sql
 create table public.pro_events (
@@ -54,7 +64,7 @@ create index pro_events_start_idx on public.pro_events(start);
 create index pro_events_status_idx on public.pro_events(status);
 ```
 
-Pour une version publique, la prochaine étape est d'ajouter l'authentification des organisateurs, une modération des publications et des règles RLS Supabase avant d'ouvrir les écritures directement aux comptes professionnels.
+Avant d'ouvrir la publication au public, ajouter l'authentification des organisateurs, la modération et les règles RLS Supabase.
 
 ## Développement
 
@@ -67,8 +77,8 @@ Puis ouvrir http://localhost:3000.
 
 ## Architecture
 
-- `app/page.tsx` : expérience mobile principale
-- `app/api/events/route.ts` : agrégateur des sources
-- `app/api/pro-events/route.ts` : publication professionnelle
-- `lib/demo-events.ts` : données de démonstration
-- `lib/types.ts` : modèle d'événement partagé
+- `app/page.tsx` : interface mobile.
+- `app/api/events/route.ts` : agrégation sport + événements professionnels.
+- `app/api/pro-events/route.ts` : publication professionnelle.
+- `lib/demo-events.ts` : données de secours/démonstration.
+- `lib/types.ts` : modèle d'événement partagé.
