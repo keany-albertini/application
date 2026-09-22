@@ -800,3 +800,65 @@ h2 {
   background: rgba(57,217,138,.07);
   color: #b9f3d4;
 }
+
+
+.internet-strip {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid rgba(57,217,138,.14);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(57,217,138,.055), rgba(139,92,246,.035));
+}
+
+.internet-icon {
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(57,217,138,.09);
+  color: #b9f3d4;
+}
+
+.internet-strip div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.internet-strip strong {
+  color: #eef0f5;
+  font-size: 11px;
+}
+
+.internet-strip div span {
+  overflow: hidden;
+  color: #818899;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.internet-strip > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #525866;
+}
+
+.internet-strip > i.online {
+  background: var(--green);
+  box-shadow: 0 0 0 5px rgba(57,217,138,.07);
+}
+
+.event-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
