@@ -32,12 +32,58 @@ const BRAND_DOMAINS: Array<[string, string]> = [
   ["pepsi", "pepsi.com"],
 ];
 
-function preferredOfficialDomains(searchText: string) {
+const BRAND_SEARCH_HINTS: Record<string, string> = {
+  nike: "experiences community events running basketball registration",
+  adidas: "events community running football experiences",
+  puma: "events running football community",
+  "red bull": "events competitions festivals races",
+  apple: "events sessions today at apple",
+  samsung: "events launches experiences",
+  sony: "events experiences launches",
+  playstation: "events tournaments gaming",
+  xbox: "events tournaments gaming",
+  microsoft: "events conferences community",
+  nintendo: "events tournaments gaming",
+  lego: "events experiences exhibitions",
+  ikea: "events workshops community",
+  decathlon: "events sport community",
+  "under armour": "events running training community",
+  "new balance": "events running community",
+  asics: "events running races community",
+  reebok: "events fitness community",
+  "coca cola": "events experiences activations",
+  pepsi: "events experiences activations",
+};
+
+function matchedBrands(searchText: string) {
   const query = normalize(searchText);
-  return BRAND_DOMAINS
-    .filter(([brand]) => query.includes(normalize(brand)))
+  return BRAND_DOMAINS.filter(([brand]) =>
+    query.includes(normalize(brand))
+  );
+}
+
+function preferredOfficialDomains(searchText: string) {
+  return matchedBrands(searchText)
     .map(([, domain]) => domain)
     .slice(0, 3);
+}
+
+function brandSearchHint(searchText: string) {
+  const brand = matchedBrands(searchText)[0]?.[0];
+  return brand ? BRAND_SEARCH_HINTS[brand] || "events experiences community" : "";
+}
+
+function naturalDateLabel(date?: string) {
+  if (!date) return "";
+  const parsed = new Date(`${date}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return date;
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(parsed);
 }
 
 const TRUSTED_OFFICIAL_HOSTS = new Set([
@@ -758,11 +804,11 @@ async function tavilyCandidates(
 ): Promise<SearchCandidate[]> {
   if (!intent.text) return [];
 
-  const query = [
+  const generalQuery = [
     intent.text,
     intent.city,
-    intent.targetDate,
-    "event agenda calendar official date venue",
+    naturalDateLabel(intent.targetDate),
+    "event events agenda calendar date venue",
   ]
     .filter(Boolean)
     .join(" ");
@@ -773,8 +819,20 @@ async function tavilyCandidates(
       : tavily();
 
     const officialDomains = preferredOfficialDomains(intent.text);
+    const officialQuery = [
+      intent.text,
+      intent.city,
+      naturalDateLabel(intent.targetDate),
+      brandSearchHint(intent.text),
+      "official event details date location",
+    ]
+      .filter(Boolean)
+      .join(" ");
 
-    const search = async (includeDomains?: string[]) => {
+    const search = async (
+      query: string,
+      includeDomains?: string[]
+    ): Promise<SearchCandidate[]> => {
       const response = await client.search(query, {
         searchDepth: "basic",
         maxResults: includeDomains?.length ? 8 : 12,
@@ -796,12 +854,12 @@ async function tavilyCandidates(
     };
 
     const official = officialDomains.length
-      ? await search(officialDomains)
+      ? await search(officialQuery, officialDomains)
       : [];
 
-    if (official.length >= 3) return official.slice(0, 8);
+    if (official.length >= 5) return official.slice(0, 8);
 
-    const general = await search();
+    const general = await search(generalQuery);
     const seen = new Set<string>();
     return [...official, ...general]
       .filter((result) => {
