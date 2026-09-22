@@ -429,7 +429,7 @@ async function tavilyCandidates(intent: SearchIntent): Promise<SearchCandidate[]
           ? { Authorization: `Bearer ${apiKey}` }
           : {
               "X-Tavily-Access-Mode": "keyless",
-              "X-Client-Source": "ApplicationCalendar",
+              "X-Client-Source": "tavily-js-keyless",
             }),
         "Content-Type": "application/json",
       },
