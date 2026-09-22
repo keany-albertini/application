@@ -25,21 +25,32 @@ type ApiResponse = {
   mode: "live" | "demo";
   sources: Record<string, boolean>;
   sourceCatalog?: SourceStatus[];
+  intent?: {
+    raw: string;
+    text: string;
+    targetDate?: string;
+    city?: string;
+    timezone?: string;
+  };
+  universalSearch?: {
+    enabled: boolean;
+    webDiscoveryConfigured: boolean;
+    openAgendaConfigured: boolean;
+    dataTourismeConfigured: boolean;
+  };
 };
 
 type View = "calendar" | "explore" | "favorites";
 
 const QUICK_SEARCHES = [
-  "Olympique de Marseille",
-  "PSG",
-  "Formula 1",
+  "Marseille",
+  "Nike",
+  "Adidas",
+  "Ping-pong Marseille",
+  "Concert Lyon",
   "Red Bull",
+  "Formula 1",
   "NBA",
-  "NHL",
-  "UFC",
-  "Formula E",
-  "Barcelona",
-  "Concert Paris",
 ];
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -79,11 +90,36 @@ function monthLabel(date: Date) {
   }).format(date);
 }
 
+function toDateParam(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function verificationLabel(event: AppEvent) {
+  switch (event.verification) {
+    case "official":
+      return "Officiel";
+    case "institutional":
+      return "Institutionnel";
+    case "professional":
+      return "Pro vérifié";
+    case "verified-web":
+      return "Web vérifié";
+    case "community":
+      return "Communauté";
+    default:
+      return event.official ? "Officiel" : "";
+  }
+}
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [mode, setMode] = useState<"live" | "demo">("demo");
   const [sourceCatalog, setSourceCatalog] = useState<SourceStatus[]>([]);
+  const [universalSearch, setUniversalSearch] = useState<ApiResponse["universalSearch"]>();
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
@@ -102,18 +138,27 @@ export default function Home() {
     void loadEvents("");
   }, []);
 
-  async function loadEvents(term: string) {
+  async function loadEvents(term: string, targetDate?: Date | null) {
     setLoading(true);
     try {
-      const response = await fetch(`/api/events?q=${encodeURIComponent(term)}`, {
+      const params = new URLSearchParams();
+      if (term.trim()) params.set("q", term.trim());
+      if (targetDate) params.set("date", toDateParam(targetDate));
+      params.set(
+        "tz",
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Paris"
+      );
+
+      const response = await fetch(`/api/events?${params.toString()}`, {
         cache: "no-store",
       });
       const payload: ApiResponse = await response.json();
       setEvents(payload.events ?? []);
       setMode(payload.mode ?? "demo");
       setSourceCatalog(payload.sourceCatalog ?? []);
+      setUniversalSearch(payload.universalSearch);
 
-      if (payload.events?.[0]) {
+      if (!targetDate && payload.events?.[0]) {
         const next = new Date(payload.events[0].start);
         if (!Number.isNaN(next.getTime())) setMonth(next);
       }
@@ -251,7 +296,7 @@ export default function Home() {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="OM, Red Bull, F1, concert, ville…"
+            placeholder="Nike Marseille demain, ping-pong Lyon…"
             aria-label="Rechercher"
           />
           {query && (
@@ -309,7 +354,9 @@ export default function Home() {
           </div>
           <span className="source-count">
             <Database size={14} />
-            {activeSources.length} actives
+            {universalSearch?.webDiscoveryConfigured
+              ? "Recherche universelle active"
+              : `${activeSources.length} sources actives`}
           </span>
         </div>
         <div className="sources-scroll">
@@ -422,7 +469,16 @@ export default function Home() {
               <button
                 key={day.toISOString()}
                 className={`day ${active ? "active" : ""} ${today ? "today" : ""}`}
-                onClick={() => setSelectedDay(active ? null : day)}
+                onClick={() => {
+                  if (active) {
+                    setSelectedDay(null);
+                    void loadEvents(query);
+                  } else {
+                    setSelectedDay(day);
+                    setView("explore");
+                    void loadEvents(query, day);
+                  }
+                }}
               >
                 <span>{day.getDate()}</span>
                 {dayEvents.length > 0 && (
@@ -497,10 +553,10 @@ export default function Home() {
                       <span className="category-pill">
                         {CATEGORY_LABELS[event.category] ?? "Événement"}
                       </span>
-                      {event.official && (
-                        <span className="official-badge compact">
+                      {verificationLabel(event) && (
+                        <span className={`official-badge compact verification-${event.verification || "official"}`}>
                           <ShieldCheck size={10} />
-                          Officiel
+                          {verificationLabel(event)}
                         </span>
                       )}
                       <span className="source">{event.source}</span>
