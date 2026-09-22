@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { demoEvents } from "@/lib/demo-events";
 import {
+  fetchDataTourisme,
   fetchOfficialWebEvents,
   fetchOpenAgenda,
   fetchParisOpenData,
-  fetchDataTourisme,
   getSourceCatalog,
 } from "@/lib/sources";
-import type { AppEvent } from "@/lib/types";
+import {
+  eventMatchesDate,
+  fetchUniversalWebEvents,
+  parseSearchIntent,
+} from "@/lib/universal-search";
+import type { AppEvent, VerificationLevel } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -70,7 +75,12 @@ function normalizeSearch(value: string) {
 function containsQuery(event: AppEvent, query: string) {
   if (!query) return true;
 
-  const needle = normalizeSearch(query);
+  const words = normalizeSearch(query)
+    .split(" ")
+    .filter((word) => word.length > 1);
+
+  if (!words.length) return true;
+
   const haystack = normalizeSearch(
     [
       event.title,
@@ -86,7 +96,7 @@ function containsQuery(event: AppEvent, query: string) {
       .join(" ")
   );
 
-  return haystack.includes(needle);
+  return words.every((word) => haystack.includes(word));
 }
 
 function normalizeDate(date?: string, time?: string) {
@@ -132,6 +142,7 @@ async function nextEventsForTeam(team: CuratedTeam): Promise<AppEvent[]> {
       source: "TheSportsDB",
       sourceUrl: "https://www.thesportsdb.com",
       official: false,
+      verification: "community",
       entity: team.strTeam,
       description: [item.strLeague, item.strSeason].filter(Boolean).join(" · "),
       image:
@@ -193,7 +204,7 @@ async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
     const params = new URLSearchParams({
       select: "*",
       order: "start.asc",
-      limit: "100",
+      limit: "150",
     });
 
     const response = await fetch(`${url}/rest/v1/pro_events?${params.toString()}`, {
@@ -206,7 +217,6 @@ async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
     });
 
     if (!response.ok) return [];
-
     const rows = await response.json();
 
     return rows
@@ -222,7 +232,8 @@ async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
         category: row.category ?? "other",
         source: "Professionnel vérifié",
         sourceUrl: row.url ?? undefined,
-        official: true,
+        official: false,
+        verification: "professional",
         url: row.url ?? undefined,
         image: row.image ?? undefined,
         entity: row.organizer ?? undefined,
@@ -234,11 +245,28 @@ async function fetchProfessionalEvents(query: string): Promise<AppEvent[]> {
   }
 }
 
-function dedupe(events: AppEvent[]) {
-  const seen = new Set<string>();
+function verificationRank(level?: VerificationLevel) {
+  switch (level) {
+    case "official":
+      return 5;
+    case "institutional":
+      return 4;
+    case "professional":
+      return 3;
+    case "verified-web":
+      return 2;
+    case "community":
+      return 1;
+    default:
+      return 0;
+  }
+}
 
-  return events.filter((event) => {
-    if (!event?.title || !event?.start) return false;
+function dedupe(events: AppEvent[]) {
+  const winners = new Map<string, AppEvent>();
+
+  for (const event of events) {
+    if (!event?.title || !event?.start) continue;
 
     const key = [
       normalizeSearch(event.title),
@@ -246,10 +274,17 @@ function dedupe(events: AppEvent[]) {
       normalizeSearch(event.city ?? ""),
     ].join("|");
 
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const current = winners.get(key);
+    if (
+      !current ||
+      verificationRank(event.verification) >
+        verificationRank(current.verification)
+    ) {
+      winners.set(key, event);
+    }
+  }
+
+  return [...winners.values()];
 }
 
 function futureOnly(events: AppEvent[]) {
@@ -279,40 +314,89 @@ function sourceActivation(events: AppEvent[]) {
     ufc: names.has("ufc"),
     "paris-open-data": names.has("ville de paris open data"),
     thesportsdb: names.has("thesportsdb"),
-    openagenda: names.has("openagenda"),
+    openagenda: [...names].some((name) => name.includes("openagenda")),
     datatourisme: names.has("datatourisme"),
+    "brave-search": events.some(
+      (event) =>
+        event.verification === "verified-web" &&
+        event.id.startsWith("web-")
+    ),
   };
 }
 
 export async function GET(request: NextRequest) {
-  const query = request.nextUrl.searchParams.get("q")?.trim() ?? "";
+  const rawQuery = request.nextUrl.searchParams.get("q")?.trim() ?? "";
+  const date = request.nextUrl.searchParams.get("date")?.trim() || undefined;
+  const timezone =
+    request.nextUrl.searchParams.get("tz")?.trim() || "Europe/Paris";
 
-  const [official, sports, paris, openAgenda, dataTourisme, professional] =
-    await Promise.all([
-      fetchOfficialWebEvents(query),
-      fetchSportsDb(query),
-      fetchParisOpenData(query),
-      fetchOpenAgenda(query),
-      fetchDataTourisme(query),
-      fetchProfessionalEvents(query),
-    ]);
+  const intent = parseSearchIntent(rawQuery, date, timezone);
+  const query = intent.text;
 
-  const liveEvents = futureOnly(
+  const [
+    official,
+    sports,
+    paris,
+    openAgenda,
+    dataTourisme,
+    professional,
+    universalWeb,
+  ] = await Promise.all([
+    fetchOfficialWebEvents(query),
+    fetchSportsDb(query),
+    fetchParisOpenData(query),
+    fetchOpenAgenda(query, intent.targetDate),
+    fetchDataTourisme(query, intent.targetDate),
+    fetchProfessionalEvents(query),
+    fetchUniversalWebEvents(intent),
+  ]);
+
+  let liveEvents = futureOnly(
     dedupe([
-      ...official,
+      ...official.map((event) => ({
+        ...event,
+        verification: event.verification ?? ("official" as const),
+      })),
       ...professional,
-      ...paris,
+      ...paris.map((event) => ({
+        ...event,
+        verification: event.verification ?? ("institutional" as const),
+      })),
       ...openAgenda,
       ...dataTourisme,
+      ...universalWeb,
       ...sports,
     ])
-  ).sort(
-    (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
   );
 
-  const fallback = futureOnly(
+  if (intent.targetDate) {
+    liveEvents = liveEvents.filter((event) =>
+      eventMatchesDate(event, intent.targetDate, intent.timezone)
+    );
+  }
+
+  liveEvents.sort((a, b) => {
+    const verificationDelta =
+      verificationRank(b.verification) - verificationRank(a.verification);
+
+    if (intent.targetDate && verificationDelta !== 0) {
+      return verificationDelta;
+    }
+
+    return new Date(a.start).getTime() - new Date(b.start).getTime();
+  });
+
+  let fallback = futureOnly(
     demoEvents.filter((event) => containsQuery(event, query))
-  ).sort(
+  );
+
+  if (intent.targetDate) {
+    fallback = fallback.filter((event) =>
+      eventMatchesDate(event, intent.targetDate, intent.timezone)
+    );
+  }
+
+  fallback.sort(
     (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
   );
 
@@ -322,13 +406,21 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     events,
     mode: liveEvents.length ? "live" : "demo",
+    intent,
     sources: activation,
     sourceCatalog: getSourceCatalog(activation),
     coverage: {
       official: official.length,
       professional: professional.length,
       openData: paris.length + openAgenda.length + dataTourisme.length,
+      universalWeb: universalWeb.length,
       sportsBackup: sports.length,
+    },
+    universalSearch: {
+      enabled: true,
+      webDiscoveryConfigured: Boolean(process.env.BRAVE_SEARCH_API_KEY),
+      openAgendaConfigured: Boolean(process.env.OPENAGENDA_API_KEY),
+      dataTourismeConfigured: Boolean(process.env.DATATOURISME_API_KEY),
     },
   });
 }
