@@ -292,8 +292,10 @@ function futureOnly(events: AppEvent[]) {
   const yesterday = Date.now() - 24 * 60 * 60 * 1000;
 
   return events.filter((event) => {
-    const value = new Date(event.start).getTime();
-    return Number.isNaN(value) || value >= yesterday;
+    const start = new Date(event.start).getTime();
+    const end = event.end ? new Date(event.end).getTime() : Number.NaN;
+    if (!Number.isNaN(end)) return end >= yesterday;
+    return Number.isNaN(start) || start >= yesterday;
   });
 }
 
