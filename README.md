@@ -1,58 +1,84 @@
-# Application — V0.3
+# Application — V0.4 Recherche universelle
 
-Calendrier mobile global qui agrège des événements provenant en priorité de sources officielles et open data, avec une source sportive gratuite de secours.
+Application mobile/PWA de calendrier événementiel global.
+
+## Objectif de la V0.4
+
+Une seule recherche doit pouvoir combiner :
+- sujet : Nike, Adidas, Red Bull, ping-pong, concert, gaming, salon, etc. ;
+- lieu : Marseille, Lyon, Bordeaux, Paris ou une ville ailleurs dans le monde ;
+- date : aujourd'hui, demain ou un jour sélectionné dans le calendrier.
+
+Exemples :
+- `Nike Marseille demain`
+- `ping-pong Lyon`
+- `Adidas Paris`
+- `concert Bordeaux`
+- `Marseille`, puis sélection d'un jour dans le calendrier.
+
+Le calendrier relance désormais la recherche côté serveur pour la date choisie au lieu de simplement filtrer une petite liste déjà chargée.
+
+## Fiabilité des résultats
+
+Chaque événement est normalisé avec sa source et un niveau de vérification :
+1. officiel ;
+2. institutionnel / open data ;
+3. professionnel vérifié ;
+4. web structuré vérifié ;
+5. communautaire.
+
+L'application n'invente pas de date à partir d'un simple article. La découverte web ne crée un événement que lorsqu'une date structurée est trouvée sur la page (Schema.org Event ou métadonnée événementielle).
 
 ## Sources intégrées
 
-### Sans clé API
-- Red Bull Events — page officielle
-- Formula 1 — calendrier officiel
-- Paris Saint-Germain — calendrier officiel
-- FC Barcelona — calendrier officiel
-- Manchester City — calendrier officiel
-- Liverpool FC — calendrier officiel
-- UEFA — calendrier/fixtures officiels
-- Ligue 1 — site officiel
-- Formula E — calendrier officiel
-- NBA — calendrier officiel
-- NHL — calendrier officiel
-- UFC — événements officiels
-- Ville de Paris Open Data — agenda public
-- TheSportsDB — secours sportif gratuit avec la clé publique `123`
+### Publiques / sans clé
+- Red Bull Events
+- Formula 1
+- Formula E
+- PSG
+- FC Barcelona
+- Manchester City
+- Liverpool FC
+- UEFA
+- Ligue 1
+- NBA
+- NHL
+- UFC
+- Ville de Paris Open Data
+- TheSportsDB (clé publique `123` comme secours sportif)
 
-### Gratuites mais avec clé à demander
-- OpenAgenda — événements culturels et territoriaux
-- DATAtourisme — base nationale française des événements touristiques, clé API gratuite sur demande
+### API gratuites à connecter
+- OpenAgenda — API gratuite avec authentification
+- DATAtourisme — clé gratuite sur demande
+- Tavily — moteur de recherche web, 1 000 crédits gratuits/mois
+- Brave Search — secours optionnel
 
-### Notre propre source
-- Supabase — événements publiés par les professionnels et validés par notre plateforme
+### Source interne
+- Supabase — événements publiés par les professionnels après validation
 
-## Variables d'environnement optionnelles
+## Variables Vercel
 
 ```bash
-THESPORTSDB_API_KEY=123
+TAVILY_API_KEY=
+BRAVE_SEARCH_API_KEY=
 OPENAGENDA_API_KEY=
 DATATOURISME_API_KEY=
+THESPORTSDB_API_KEY=123
+
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
-Aucune clé n'est nécessaire pour lancer l'interface et utiliser les sources publiques sans authentification. Les clés privées doivent rester dans les variables Vercel et ne jamais être commitées dans le dépôt.
+Les clés restent exclusivement côté serveur.
 
-## Fonctionnement
+## Architecture
 
-`/api/events` interroge les sources pertinentes en parallèle, normalise les événements dans un format unique, élimine les doublons, retire les événements passés et privilégie les données officielles dans le flux.
-
-L'interface affiche la provenance et un badge **Officiel** lorsque l'événement vient directement d'une source officielle ou open data institutionnelle.
-
-## Publication professionnelle
-
-La route `/api/pro-events` est prête pour Supabase. Avant ouverture publique :
-- authentification des organisateurs ;
-- validation/modération ;
-- règles RLS ;
-- historique des modifications ;
-- vérification de domaine ou d'identité pour les comptes professionnels.
+- `app/page.tsx` — interface mobile + calendrier qui déclenche les recherches datées
+- `app/api/events/route.ts` — agrégation, déduplication et classement de confiance
+- `lib/universal-search.ts` — compréhension aujourd'hui/demain + découverte web structurée
+- `lib/sources.ts` — sources officielles, OpenAgenda et DATAtourisme
+- `app/api/pro-events/route.ts` — publication professionnelle
+- `lib/types.ts` — modèle unifié
 
 ## Développement
 
@@ -61,12 +87,3 @@ npm install
 npm run dev
 npm run build
 ```
-
-## Architecture
-
-- `app/page.tsx` — interface mobile/PWA
-- `app/api/events/route.ts` — agrégateur
-- `app/api/pro-events/route.ts` — publication professionnelle
-- `lib/sources.ts` — adaptateurs officiels/open data/API
-- `lib/types.ts` — modèle unifié
-- `lib/demo-events.ts` — secours lorsque les sources ne répondent pas
