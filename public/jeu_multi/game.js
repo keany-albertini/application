@@ -19,11 +19,11 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMappingExposure = 1.55;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0d12);
-scene.fog = new THREE.Fog(0x0a0d12, 28, 78);
+scene.background = new THREE.Color(0x182028);
+scene.fog = new THREE.Fog(0x182028, 42, 105);
 
 const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.08, 180);
 camera.position.set(0, 1.7, 8);
@@ -31,10 +31,10 @@ camera.position.set(0, 1.7, 8);
 const controls = new PointerLockControls(camera, document.body);
 scene.add(controls.object);
 
-const ambient = new THREE.HemisphereLight(0xbfd7ff, 0x1a1b20, 1.35);
+const ambient = new THREE.HemisphereLight(0xe8f2ff, 0x5b5148, 2.65);
 scene.add(ambient);
 
-const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+const sun = new THREE.DirectionalLight(0xffffff, 3.5);
 sun.position.set(15, 24, 8);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -43,6 +43,14 @@ sun.shadow.camera.right = 40;
 sun.shadow.camera.top = 40;
 sun.shadow.camera.bottom = -40;
 scene.add(sun);
+
+const fillLight = new THREE.DirectionalLight(0x9dc8ff, 1.4);
+fillLight.position.set(-14, 10, -16);
+scene.add(fillLight);
+
+const cameraLight = new THREE.PointLight(0xfff3dc, 2.4, 22, 1.45);
+cameraLight.position.set(0, 0.2, 0.15);
+camera.add(cameraLight);
 
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -529,7 +537,13 @@ function clearMap() {
 function addBox(x, y, z, w, h, d, color) {
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial({ color, roughness: .82, metalness: .08 })
+    new THREE.MeshStandardMaterial({
+      color,
+      roughness: .78,
+      metalness: .08,
+      emissive: new THREE.Color(color).multiplyScalar(.14),
+      emissiveIntensity: .55
+    })
   );
   mesh.position.set(x, y, z);
   mesh.castShadow = true;
@@ -543,17 +557,55 @@ function addBox(x, y, z, w, h, d, color) {
 function buildMap(index) {
   clearMap();
   const map = MAPS[index];
-  scene.background.setHex(map.sky);
-  scene.fog.color.setHex(map.fog);
+  const skyColor = new THREE.Color(map.sky).offsetHSL(0, 0, .11);
+  const fogColor = new THREE.Color(map.fog).offsetHSL(0, 0, .08);
+  scene.background.copy(skyColor);
+  scene.fog.color.copy(fogColor);
+  scene.fog.near = 42;
+  scene.fog.far = 105;
 
+  const floorColor = new THREE.Color(map.floor).offsetHSL(0, 0, .08);
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(46, 46),
-    new THREE.MeshStandardMaterial({ color: map.floor, roughness:.94, metalness:.03 })
+    new THREE.MeshStandardMaterial({
+      color: floorColor,
+      roughness: .9,
+      metalness: .03
+    })
   );
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
   mapObjects.push(floor);
+
+  const grid = new THREE.GridHelper(
+    46,
+    23,
+    new THREE.Color(map.accent).offsetHSL(0, 0, .28),
+    0x7d8793
+  );
+  grid.position.y = .012;
+  const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
+  gridMaterials.forEach((material) => {
+    material.transparent = true;
+    material.opacity = .24;
+  });
+  scene.add(grid);
+  mapObjects.push(grid);
+
+  const centerMarker = new THREE.Mesh(
+    new THREE.RingGeometry(2.2, 2.34, 48),
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color(map.accent).offsetHSL(0, 0, .35),
+      transparent: true,
+      opacity: .46,
+      side: THREE.DoubleSide
+    })
+  );
+  centerMarker.rotation.x = -Math.PI / 2;
+  centerMarker.position.y = .022;
+  scene.add(centerMarker);
+  mapObjects.push(centerMarker);
 
   for (const box of map.boxes) addBox(...box, map.accent);
 
@@ -611,24 +663,52 @@ opponent.visible = false;
 
 function createWeapon() {
   const group = new THREE.Group();
-  const dark = new THREE.MeshStandardMaterial({ color:0x171a20, roughness:.3, metalness:.75 });
-  const accent = new THREE.MeshStandardMaterial({ color:0xd8443a, roughness:.4, metalness:.55 });
+  const dark = new THREE.MeshStandardMaterial({
+    color:0x3b424d,
+    roughness:.32,
+    metalness:.62
+  });
+  const accent = new THREE.MeshStandardMaterial({
+    color:0xff5b4d,
+    roughness:.34,
+    metalness:.46,
+    emissive:0x4b0d09,
+    emissiveIntensity:.7
+  });
+  const lightMetal = new THREE.MeshStandardMaterial({
+    color:0x8d98a8,
+    roughness:.28,
+    metalness:.72
+  });
 
-  const receiver = new THREE.Mesh(new THREE.BoxGeometry(.18,.16,.65), dark);
-  receiver.position.set(.28,-.23,-.65);
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(.23,.19,.72), dark);
+  receiver.position.set(.31,-.24,-.68);
   group.add(receiver);
 
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(.07,.07,.6), accent);
-  barrel.position.set(.28,-.2,-1.22);
+  const handguard = new THREE.Mesh(new THREE.BoxGeometry(.17,.14,.5), accent);
+  handguard.position.set(.31,-.21,-1.17);
+  group.add(handguard);
+
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(.075,.075,.48), lightMetal);
+  barrel.position.set(.31,-.19,-1.62);
   group.add(barrel);
 
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(.1,.25,.12), dark);
-  grip.position.set(.28,-.34,-.58);
-  grip.rotation.x = -.3;
+  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(.11,.11,.16), dark);
+  muzzle.position.set(.31,-.19,-1.92);
+  group.add(muzzle);
+
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(.12,.28,.14), dark);
+  grip.position.set(.31,-.39,-.62);
+  grip.rotation.x = -.27;
   group.add(grip);
 
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(.07,.08,.15), accent);
+  sight.position.set(.31,-.10,-.76);
+  group.add(sight);
+
   camera.add(group);
-  group.position.set(.12,-.05,0);
+  group.position.set(.11,.015,0);
+  group.scale.setScalar(isTouch ? 1.08 : 1);
   return group;
 }
 
