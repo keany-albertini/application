@@ -775,3 +775,28 @@ h2 {
   color: #7d8494;
   font-size: 10px;
 }
+
+
+.verification-verified-web {
+  border-color: rgba(59,130,246,.22);
+  background: rgba(59,130,246,.08);
+  color: #bcd4ff;
+}
+
+.verification-community {
+  border-color: rgba(245,158,11,.20);
+  background: rgba(245,158,11,.07);
+  color: #f8d58a;
+}
+
+.verification-professional {
+  border-color: rgba(6,182,212,.20);
+  background: rgba(6,182,212,.07);
+  color: #aeeaf3;
+}
+
+.verification-institutional {
+  border-color: rgba(57,217,138,.22);
+  background: rgba(57,217,138,.07);
+  color: #b9f3d4;
+}
